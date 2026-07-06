@@ -109,11 +109,7 @@ export class SceneRenderer {
         
         this.game.ctx.font = `${this.game.isLandscape ? 45 * this.game.screenScale : 65 * this.game.screenScale}px "VT323", monospace`;
         const tokenomicsString = "TOTAL SUPPLY: 1,000,000,000 $TICKER | " +
-                                 "REWARD POOL: 10% (100,000,000) locked for 104-week emission. | " + 
                                  "DEV WALLET: 2% (20,000,000) reserved for developer. | " +
-                                 "DISTRIBUTION: Split evenly across all 9 game modes. | " +
-                                 "DAILY REWARDS: Top 3 pilots per mode share daily pool. | " +
-                                 "WEEKLY REWARDS: Top 10 pilots per mode share weekly pool. | " +
                                  "DEFLATIONARY: Revives burn 1,000 $TICKER, shrinking supply.";
         this.wrappedTokenomicsText = this.wrapText(this.game.ctx, tokenomicsString, maxAboutWidth);
 

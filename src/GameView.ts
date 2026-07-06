@@ -51,7 +51,7 @@ export class GameView {
     // --> ADD YOUR LAUNCH ADDRESSES HERE <--
     public readonly CONTRACT_ADDRESS = "YOUR_CA_HERE";
     public readonly TARGET_TOKEN_MINT = "YOUR_TOKEN_MINT_ADDRESS_HERE";
-    public readonly BURN_WALLET_ADDRESS = "11111111111111111111111111111111"; // Standard Solana Incinerator
+   
     
     // RPC endpoint used for all on-chain reads/writes.
     // NOTE: The public mainnet endpoint is heavily rate-limited and often rejects
@@ -519,7 +519,7 @@ export class GameView {
     public triggerSpark(x: number, y: number) { if (this.particles.length < 10) this.particles.push(new Particle(x, y, "yellow", this.screenScale)); }
 
     private setupInputs() {
-        window.addEventListener('pointerdown', (e) => { if (document.getElementById("arcade-wallet-modal")) return; this.isDragging = true; this.dragStartX = e.clientX; this.dragStartY = e.clientY; this.handleInput(e.clientX, e.clientY); });
+        window.addEventListener('pointerdown', (e) => { if (document.getElementById("arcade-wallet-modal") || document.getElementById("intro-video-overlay")) return; this.isDragging = true; this.dragStartX = e.clientX; this.dragStartY = e.clientY; this.handleInput(e.clientX, e.clientY); });
         window.addEventListener('pointermove', (e) => {
             if (!this.isDragging) return;
             const dx = e.clientX - this.dragStartX; const dy = e.clientY - this.dragStartY;
@@ -537,6 +537,7 @@ export class GameView {
             if (this.currentState === GameState.LEADERBOARDS) { this.leaderboardScrollX = Math.max(0, Math.min(8, Math.round(this.leaderboardScrollX / this.canvas.width))) * this.canvas.width; }
         });
         window.addEventListener('keydown', (e) => {
+            if (document.getElementById("intro-video-overlay")) return; // intro handles its own keys
             if ((e.target as HTMLElement)?.tagName === 'INPUT') return; // typing in the wallet address field
             if (e.code === 'Space') { e.preventDefault(); this.handleVirtualKey('Space'); }
             if (e.code === 'Escape') this.handleVirtualKey('Escape');
