@@ -60,6 +60,7 @@ export class GameView {
     
     public walletConnected: boolean = false;
     public userPublicKey: string = "";
+    public watchOnlyMode: boolean = false; // true when connected via pasted address (pump.fun wallet) - no signing possible
     public tokenBalance: number = 0;
     public readonly REVIVE_COST = 1000; 
     
@@ -116,7 +117,6 @@ export class GameView {
     private dragStartY: number = 0;
 
     public usedRecovery: boolean = false;
-    public gamesPlayedSinceAd: number = 0;
     private lastGamepadState: boolean[] = [];
 
     // --- SECURE TELEMETRY & SUPABASE ARCHITECTURE ---
@@ -141,8 +141,6 @@ export class GameView {
                 this.handleResize(); 
                 this.setupInputs();
                 
-                await this.waitForSDK();
-                this.cgInit();
                 await this.loadGameData();
                 this.fetchGlobalStats(); // Fetch Active Pilots & Burn amount
                 this.startPresenceHeartbeat(); // Register this player + keep stats live
@@ -158,40 +156,17 @@ export class GameView {
                         this.currentState = GameState.MENU;
                     }
                     this.audio.playThemeMusic(this.bgColorIndex);
-                    this.cgStopLoading();
                 }, 1500);
             });
         }
     }
 
-    private async waitForSDK(): Promise<void> {
-        return new Promise((resolve) => {
-            const check = () => { try { const sdk = (window as any).CrazyGames?.SDK; if (sdk && sdk.game) return true; } catch (e) {} return false; };
-            if (check()) { resolve(); return; }
-            const interval = setInterval(() => { if (check()) { clearInterval(interval); resolve(); } }, 50);
-            setTimeout(() => { clearInterval(interval); resolve(); }, 1500);
-        });
-    }
-
-    private get cg() { return (window as any).CrazyGames?.SDK || null; }
-    private cgInit() { try { const sdk = this.cg; if (sdk) sdk.game.sdkGameLoadingStart(); } catch (e) {} }
-    private cgStopLoading() { try { const sdk = this.cg; if (sdk) sdk.game.sdkGameLoadingStop(); } catch (e) {} }
-    private cgGameplayStart() { try { const sdk = this.cg; if (sdk) sdk.game.gameplayStart(); } catch (e) {} }
-    private cgGameplayStop() { try { const sdk = this.cg; if (sdk) sdk.game.gameplayStop(); } catch (e) {} }
-
-    private cgRequestMidgameAd(onComplete: () => void) {
-        try { const sdk = this.cg; if (sdk) { sdk.ad.requestAd("midgame", { adStarted: () => { this.audio.pauseMusic(); }, adFinished: () => { this.audio.resumeMusic(this.bgColorIndex); onComplete(); }, adError: () => { this.audio.resumeMusic(this.bgColorIndex); onComplete(); } }); return; } } catch (e) {}
-        onComplete();
-    }
-
     private async setData(key: string, value: string) {
         this.memoryStorage[key] = value;
-        try { const sdk = this.cg; if (sdk) { await sdk.data.setItem(key, value); return; } } catch (e) {}
         try { localStorage.setItem(key, value); } catch (e) {}
     }
 
     private async getData(key: string): Promise<string | null> {
-        try { const sdk = this.cg; if (sdk) { const val = await sdk.data.getItem(key); if (val !== null && val !== undefined) return val; } } catch (e) {}
         try { const val = localStorage.getItem(key); if (val !== null && val !== undefined) return val; } catch (e) {}
         return this.memoryStorage[key] || null;
     }
@@ -352,6 +327,13 @@ export class GameView {
             return false;
         }
 
+        if (this.watchOnlyMode) {
+            // A pasted address can't sign transactions - burns are impossible.
+            console.warn("[BURN] Watch-only mode: cannot sign transactions.");
+            this.showToast("WATCH MODE: revives need a signing wallet. Import your pump.fun key into Phantom, then reconnect.", 6000);
+            return false;
+        }
+
         const provider = (window as any).activeSolanaProvider;
         if (!provider) {
             console.error("[BURN] No active wallet provider found");
@@ -494,6 +476,14 @@ export class GameView {
         const savedDiff = await this.getData('difficulty'); const diffVal = parseInt(savedDiff || '0') || 0;
         this.currentDifficulty = diffVal === 0 ? Difficulty.EASY : (diffVal === 1 ? Difficulty.MEDIUM : Difficulty.HARD);
         const savedObs = await this.getData('obstacle_mode'); this.obstacleMode = parseInt(savedObs || '0') || 0;
+
+        // Restore a previously saved watch-mode wallet (pump.fun / pasted address)
+        const watchAddr = await this.getData('watchAddress');
+        if (!this.isDevMode && watchAddr && this.isValidSolanaAddress(watchAddr)) {
+            this.userPublicKey = watchAddr; this.walletConnected = true; this.watchOnlyMode = true;
+            this.syncOnChainTokenBalance(); // async, fire-and-forget
+        }
+
         this.updateStringCache(); await this.loadHighScore(); await this.evaluateShipUnlocks();
     }
 
@@ -529,7 +519,7 @@ export class GameView {
     public triggerSpark(x: number, y: number) { if (this.particles.length < 10) this.particles.push(new Particle(x, y, "yellow", this.screenScale)); }
 
     private setupInputs() {
-        window.addEventListener('pointerdown', (e) => { this.isDragging = true; this.dragStartX = e.clientX; this.dragStartY = e.clientY; this.handleInput(e.clientX, e.clientY); });
+        window.addEventListener('pointerdown', (e) => { if (document.getElementById("arcade-wallet-modal")) return; this.isDragging = true; this.dragStartX = e.clientX; this.dragStartY = e.clientY; this.handleInput(e.clientX, e.clientY); });
         window.addEventListener('pointermove', (e) => {
             if (!this.isDragging) return;
             const dx = e.clientX - this.dragStartX; const dy = e.clientY - this.dragStartY;
@@ -547,6 +537,7 @@ export class GameView {
             if (this.currentState === GameState.LEADERBOARDS) { this.leaderboardScrollX = Math.max(0, Math.min(8, Math.round(this.leaderboardScrollX / this.canvas.width))) * this.canvas.width; }
         });
         window.addEventListener('keydown', (e) => {
+            if ((e.target as HTMLElement)?.tagName === 'INPUT') return; // typing in the wallet address field
             if (e.code === 'Space') { e.preventDefault(); this.handleVirtualKey('Space'); }
             if (e.code === 'Escape') this.handleVirtualKey('Escape');
             if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.handleVirtualKey('ArrowLeft');
@@ -599,11 +590,6 @@ export class GameView {
         }
     }
 
-    private handleAdTransition(action: () => void) {
-        this.gamesPlayedSinceAd++;
-        if (this.gamesPlayedSinceAd >= 4) { this.gamesPlayedSinceAd = 0; this.cgRequestMidgameAd(action); } else { action(); }
-    }
-
     // --- MULTI-WALLET POPUP INTEGRATION ---
     public async connectSolanaWallet() {
         if (this.isDevMode) {
@@ -641,8 +627,9 @@ export class GameView {
                     try {
                         const response = await provider.connect();
                         this.userPublicKey = (response.publicKey ? response.publicKey.toString() : response.toString());
-                        this.walletConnected = true; (window as any).activeSolanaProvider = provider;
-                        await this.syncOnChainTokenBalance(provider);
+                        this.walletConnected = true; this.watchOnlyMode = false; (window as any).activeSolanaProvider = provider;
+                        await this.setData('watchAddress', ''); // extension wallet supersedes any saved watch address
+                        await this.syncOnChainTokenBalance();
                         this.audio.playClickSound(); document.body.removeChild(overlay);
                     } catch (err) { console.error(`${name} link authorization rejected`, err); }
                 } else { window.open(downloadUrl, "_blank"); }
@@ -654,6 +641,32 @@ export class GameView {
         modal.appendChild(createWalletButton("2. SOLFLARE", () => (window as any).solflare, "https://solflare.com/"));
         modal.appendChild(createWalletButton("3. BACKPACK", () => (window as any).backpack, "https://backpack.app/"));
 
+        // Pump.fun's built-in wallet has no browser extension and cannot sign on
+        // external sites, so those players connect by pasting their address
+        // (read-only: balance unlocks work, burn revives do not).
+        const watchBtn = document.createElement("button");
+        watchBtn.innerText = "4. PUMP.FUN / WALLET ADDRESS";
+        watchBtn.style.cssText = "width:100%; padding:15px; margin:10px 0; font-size:26px; font-family:'VT323', monospace; cursor:pointer; background-color:#221500; color:#FF9900; border:2px solid #FF9900; transition:all 0.2s ease;";
+        watchBtn.onmouseover = () => { watchBtn.style.backgroundColor = "#FF9900"; watchBtn.style.color = "#000"; watchBtn.style.boxShadow = "0 0 15px #FF9900"; };
+        watchBtn.onmouseout = () => { watchBtn.style.backgroundColor = "#221500"; watchBtn.style.color = "#FF9900"; watchBtn.style.boxShadow = "none"; };
+        watchBtn.onclick = () => { this.audio.playClickSound(); this.showAddressEntryView(modal, overlay); };
+        modal.appendChild(watchBtn);
+
+        if (this.walletConnected) {
+            const disconnectBtn = document.createElement("button");
+            disconnectBtn.innerText = "[ DISCONNECT WALLET ]";
+            disconnectBtn.style.cssText = "background:none; border:none; color:#FFAA00; font-size:20px; margin-top:15px; cursor:pointer; font-family:'VT323', monospace; display:block; width:100%;";
+            disconnectBtn.onclick = async () => {
+                this.audio.playClickSound();
+                this.walletConnected = false; this.watchOnlyMode = false; this.userPublicKey = ""; this.tokenBalance = 0;
+                (window as any).activeSolanaProvider = null;
+                await this.setData('watchAddress', '');
+                await this.evaluateShipUnlocks(); this.updateStringCache();
+                document.body.removeChild(overlay);
+            };
+            modal.appendChild(disconnectBtn);
+        }
+
         const cancelBtn = document.createElement("button");
         cancelBtn.innerText = "[ ABORT MISSION ]";
         cancelBtn.style.cssText = "background:none; border:none; color:#FF3333; font-size:22px; margin-top:25px; cursor:pointer; font-family:'VT323', monospace;";
@@ -661,8 +674,86 @@ export class GameView {
         modal.appendChild(cancelBtn); overlay.appendChild(modal); document.body.appendChild(overlay);
     }
 
-    public async syncOnChainTokenBalance(provider: any = (window as any).activeSolanaProvider) {
-        if (this.isDevMode || !this.userPublicKey || !provider) return;
+    // --- WATCH-MODE (PUMP.FUN / PASTED ADDRESS) CONNECTION ---
+    private showAddressEntryView(modal: HTMLElement, overlay: HTMLElement) {
+        modal.innerHTML = "";
+
+        const title = document.createElement("h2");
+        title.innerText = "ENTER WALLET ADDRESS";
+        title.style.cssText = "color:#FFF; font-size:34px; margin:0 0 15px 0; letter-spacing:2px;";
+        modal.appendChild(title);
+
+        const hint = document.createElement("p");
+        hint.innerText = "Pump.fun players: open pump.fun, tap your profile picture, and copy your wallet address. Holding $TICKER there unlocks modes, ships & backgrounds. NOTE: revives (token burns) need a signing wallet - import your pump.fun key into Phantom to use them.";
+        hint.style.cssText = "color:#AAA; font-size:19px; line-height:1.35; margin:0 0 20px 0; text-align:left;";
+        modal.appendChild(hint);
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "Solana wallet address...";
+        input.autocomplete = "off"; input.spellcheck = false;
+        input.style.cssText = "width:100%; box-sizing:border-box; padding:12px; font-size:22px; font-family:'VT323', monospace; background-color:#000; color:#00FF88; border:2px solid #00FFFF; outline:none; margin-bottom:8px;";
+        modal.appendChild(input);
+
+        const errorLabel = document.createElement("div");
+        errorLabel.style.cssText = "color:#FF5555; font-size:20px; min-height:24px; margin-bottom:8px;";
+        modal.appendChild(errorLabel);
+
+        const connectBtn = document.createElement("button");
+        connectBtn.innerText = "CONNECT (READ-ONLY)";
+        connectBtn.style.cssText = "width:100%; padding:15px; font-size:28px; font-family:'VT323', monospace; cursor:pointer; background-color:#003322; color:#00FF88; border:2px solid #00FF88;";
+        connectBtn.onclick = async () => {
+            const addr = input.value.trim();
+            if (!this.isValidSolanaAddress(addr)) {
+                errorLabel.innerText = "INVALID ADDRESS. Check for typos or missing characters.";
+                return;
+            }
+            connectBtn.innerText = "SYNCING BALANCE...";
+            connectBtn.style.pointerEvents = "none";
+            await this.connectWatchOnly(addr);
+            this.audio.playClickSound();
+            document.body.removeChild(overlay);
+        };
+        modal.appendChild(connectBtn);
+
+        const backBtn = document.createElement("button");
+        backBtn.innerText = "[ BACK ]";
+        backBtn.style.cssText = "background:none; border:none; color:#FF3333; font-size:22px; margin-top:20px; cursor:pointer; font-family:'VT323', monospace;";
+        backBtn.onclick = () => { this.audio.playClickSound(); document.body.removeChild(overlay); this.showWalletSelectorModal(); };
+        modal.appendChild(backBtn);
+
+        setTimeout(() => input.focus(), 50);
+    }
+
+    public isValidSolanaAddress(addr: string): boolean {
+        // Base58 charset (no 0, O, I, l), typical Solana pubkey length
+        return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr.trim());
+    }
+
+    public async connectWatchOnly(address: string) {
+        this.userPublicKey = address.trim();
+        this.walletConnected = true;
+        this.watchOnlyMode = true;
+        (window as any).activeSolanaProvider = null;
+        await this.setData('watchAddress', this.userPublicKey);
+        await this.syncOnChainTokenBalance();
+        console.log(`[WALLET] Watch-only connection: ${this.userPublicKey}`);
+    }
+
+    // Lightweight in-game toast for messages the canvas UI can't show
+    private showToast(message: string, durationMs: number = 5000) {
+        const existing = document.getElementById("arcade-toast");
+        if (existing) existing.remove();
+        const toast = document.createElement("div");
+        toast.id = "arcade-toast";
+        toast.innerText = message;
+        toast.style.cssText = "position:fixed; bottom:6%; left:50%; transform:translateX(-50%); max-width:80vw; background-color:#111; color:#FF9900; border:2px solid #FF9900; padding:14px 22px; font-family:'VT323', monospace; font-size:22px; z-index:99998; text-align:center; box-shadow:0 0 20px rgba(255,153,0,0.5);";
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), durationMs);
+    }
+
+    public async syncOnChainTokenBalance() {
+        if (this.isDevMode || !this.userPublicKey) return;
         try {
             const response = await fetch(this.SOLANA_RPC_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner", params: [ this.userPublicKey, { mint: this.TARGET_TOKEN_MINT }, { encoding: "jsonParsed" } ] }) });
             const data = await response.json(); const accounts = data.result?.value || [];
@@ -686,7 +777,7 @@ export class GameView {
                 if (!this.isDevMode && this.tokenBalance < this.obsTokenThresholds[this.obstacleMode]) {
                     this.audio.playExplosionSound(); return; 
                 }
-                this.audio.playClickSound(); this.resetGame(); this.currentState = GameState.PLAYING; this.cgGameplayStart(); 
+                this.audio.playClickSound(); this.resetGame(); this.currentState = GameState.PLAYING;
             }
             if (this.renderer.menuSettingsRect.contains(x, y)) { this.audio.playClickSound(); this.stateBeforeSettings = this.currentState; this.currentState = GameState.SETTINGS; }
             
@@ -701,7 +792,7 @@ export class GameView {
         } 
         else if (this.currentState === GameState.PAUSED) {
             if (this.renderer.pauseResumeRect.contains(x, y)) { this.audio.playClickSound(); this.countdownValue = 3; this.lastCountdownUpdate = Date.now(); this.currentState = GameState.COUNTDOWN; }
-            if (this.renderer.pauseMenuRect.contains(x, y)) { this.audio.playClickSound(); this.cgGameplayStop(); this.currentState = GameState.MENU; }
+            if (this.renderer.pauseMenuRect.contains(x, y)) { this.audio.playClickSound(); this.currentState = GameState.MENU; }
             if (this.renderer.pauseSettingsRect.contains(x, y)) { this.audio.playClickSound(); this.stateBeforeSettings = this.currentState; this.currentState = GameState.SETTINGS; }
         }
         else if (this.currentState === GameState.GAME_OVER) {
@@ -716,15 +807,15 @@ export class GameView {
                         this.usedRecovery = true; this.birdY = this.canvas.height / 2; this.velocity = 0; this.obstacles = [];
                         this.shieldCount = 1; this.hasShield = true; this.updateStringCache();
                         this.countdownValue = 3; this.lastCountdownUpdate = Date.now(); 
-                        this.currentState = GameState.COUNTDOWN; this.cgGameplayStart();
+                        this.currentState = GameState.COUNTDOWN;
                     } else {
                         // User rejected transaction or lack of funds
                         this.audio.playExplosionSound();
                     }
                 }
             }
-            if (this.renderer.restartBtnRect.contains(x, y)) { this.audio.playClickSound(); this.handleAdTransition(() => { this.resetGame(); this.currentState = GameState.PLAYING; this.cgGameplayStart(); }); }
-            if (this.renderer.gameOverMenuRect.contains(x, y)) { this.audio.playClickSound(); this.handleAdTransition(() => { this.currentState = GameState.MENU; }); }
+            if (this.renderer.restartBtnRect.contains(x, y)) { this.audio.playClickSound(); this.resetGame(); this.currentState = GameState.PLAYING; }
+            if (this.renderer.gameOverMenuRect.contains(x, y)) { this.audio.playClickSound(); this.currentState = GameState.MENU; }
         }
         else if (this.currentState === GameState.SETTINGS) {
             if (this.renderer.settingsCloseRect.contains(x, y)) { await this.handleVirtualKey('Escape'); }
@@ -855,7 +946,7 @@ export class GameView {
 
     private handleGameOver(quote: string) {
         this.audio.triggerVibration(300); this.audio.playExplosionSound(); this.saveHighScore(); 
-        this.currentDeathQuote = quote; this.shakeTimer = 10; this.currentState = GameState.GAME_OVER; this.cgGameplayStop();
+        this.currentDeathQuote = quote; this.shakeTimer = 10; this.currentState = GameState.GAME_OVER;
     }
 
     private draw(dt: number) {

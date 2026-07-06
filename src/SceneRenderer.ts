@@ -374,7 +374,9 @@ export class SceneRenderer {
         const startColor = isObsUnlocked ? "white" : "#FF5555";
         this.drawGlowText(ctx, startText, this.menuTapToStartRect, this.game.isLandscape ? 70 * this.game.screenScale : 112 * this.game.screenScale, startColor);
         
-        const walletString = this.game.walletConnected ? `BAL: ${Math.floor(this.game.tokenBalance).toLocaleString()} $TICKER` : "CONNECT WALLET";
+        const walletString = this.game.walletConnected
+            ? `${this.game.watchOnlyMode ? "[WATCH] " : ""}BAL: ${Math.floor(this.game.tokenBalance).toLocaleString()} $TICKER`
+            : "CONNECT WALLET";
         this.drawGlowText(ctx, walletString, this.menuWalletRect, this.game.isLandscape ? 40 * this.game.screenScale : 65 * this.game.screenScale);
         
         let caText = "";
