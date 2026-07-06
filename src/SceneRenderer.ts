@@ -108,9 +108,9 @@ export class SceneRenderer {
         this.wrappedAboutDeveloperText = this.wrapText(this.game.ctx, "Developed by: 2bit Developer", this.game.isLandscape ? maxAboutWidth : this.game.canvas.width - 300 * this.game.screenScale);
         
         this.game.ctx.font = `${this.game.isLandscape ? 45 * this.game.screenScale : 65 * this.game.screenScale}px "VT323", monospace`;
-        const tokenomicsString = "TOTAL SUPPLY: 1,000,000,000 $JMP | " +
+        const tokenomicsString = "TOTAL SUPPLY: 1,000,000,000 $2BA | " +
                                  "DEV WALLET: 2% (20,000,000) reserved for developer. | " +
-                                 "DEFLATIONARY: Revives burn 1,000 $JMP, shrinking supply. | " +
+                                 "DEFLATIONARY: Revives burn 1,000 $2BA, shrinking supply. | " +
                                  "DAILY REWARD: Top 3 pilots each day get ALL modes & ships unlocked for 24 hours. | " +
                                  "WEEKLY REWARD: Top 10 pilots each week get ALL unlocked for 72 hours.";
         this.wrappedTokenomicsText = this.wrapText(this.game.ctx, tokenomicsString, maxAboutWidth);
@@ -349,18 +349,16 @@ export class SceneRenderer {
         
         const statsX = 40 * this.game.screenScale;
         const statsY = 40 * this.game.screenScale;
-        ctx.fillText("● " + this.game.activePilotsStr, statsX, statsY);
-        ctx.fillText("● " + this.game.tokensBurnedStr, statsX, statsY + (this.game.isLandscape ? 45 : 60) * this.game.screenScale);
+        // Active pilots / burn stats moved to the 2bitArcade landing page.
         if (this.game.hasRewardUnlock()) {
             const msLeft = this.game.rewardUnlockUntil - Date.now();
             const hLeft = Math.floor(msLeft / 3600000), mLeft = Math.floor((msLeft % 3600000) / 60000);
             ctx.fillStyle = "#FFD700"; ctx.shadowColor = "rgb(255, 215, 0)";
-            ctx.fillText(`★ CHAMPION UNLOCK: ${hLeft}h ${mLeft}m`, statsX, statsY + 2 * (this.game.isLandscape ? 45 : 60) * this.game.screenScale);
+            ctx.fillText(`★ CHAMPION UNLOCK: ${hLeft}h ${mLeft}m`, statsX, statsY);
         }
         ctx.restore();
 
         this.drawGlowText(ctx, "SETTINGS", this.menuSettingsRect, this.game.isLandscape ? 50 * this.game.screenScale : 75 * this.game.screenScale);
-        this.drawGlowText(ctx, "TOKENOMICS", this.menuTokenomicsRect, this.game.isLandscape ? 50 * this.game.screenScale : 75 * this.game.screenScale);
 
         ctx.fillStyle = "white"; ctx.font = `${this.game.isLandscape ? 55 * this.game.screenScale : 72 * this.game.screenScale}px "VT323", monospace`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -384,13 +382,13 @@ export class SceneRenderer {
                 // Holding requirement, not a price: checked against the connected wallet's balance
                 ctx.font = `${34 * this.game.screenScale}px "VT323", monospace`;
                 ctx.fillStyle = "#FF8888";
-                ctx.fillText(`HOLD ${this.game.obsTokenThresholds[this.game.obstacleMode].toLocaleString()} $JMP IN WALLET TO UNLOCK`, menuCx, this.menuLeftArrowRect.centerY() + 75 * this.game.screenScale);
+                ctx.fillText(`HOLD ${this.game.obsTokenThresholds[this.game.obstacleMode].toLocaleString()} $2BA IN WALLET TO UNLOCK`, menuCx, this.menuLeftArrowRect.centerY() + 75 * this.game.screenScale);
             }
         } else {
             ctx.fillText(this.game.diffStatusStr, this.game.canvas.width / 2, this.menuDiffLeftArrowRect.centerY() + 25 * this.game.screenScale);
             
             if (!isObsUnlocked) {
-                obsDisplayStr = `LOCKED (${this.game.obsTokenThresholds[this.game.obstacleMode] / 1000}k $JMP)`;
+                obsDisplayStr = `LOCKED (${this.game.obsTokenThresholds[this.game.obstacleMode] / 1000}k $2BA)`;
                 ctx.fillStyle = "#FF5555"; ctx.shadowColor = "rgb(255, 0, 0)";
             }
             ctx.fillText(obsDisplayStr, this.game.canvas.width / 2, this.menuLeftArrowRect.centerY() + 25 * this.game.screenScale);
@@ -410,19 +408,10 @@ export class SceneRenderer {
         this.drawGlowText(ctx, startText, this.menuTapToStartRect, this.game.isLandscape ? 70 * this.game.screenScale : 112 * this.game.screenScale, startColor);
         
         const walletString = this.game.walletConnected
-            ? `${this.game.watchOnlyMode ? "[WATCH] " : ""}BAL: ${Math.floor(this.game.tokenBalance).toLocaleString()} $JMP`
+            ? `${this.game.watchOnlyMode ? "[WATCH] " : ""}BAL: ${Math.floor(this.game.tokenBalance).toLocaleString()} $2BA`
             : "CONNECT WALLET";
         this.drawGlowText(ctx, walletString, this.menuWalletRect, this.game.isLandscape ? 40 * this.game.screenScale : 65 * this.game.screenScale);
         
-        let caText = "";
-        if (this.game.caCopiedTimer > 0) {
-            caText = "CA COPIED TO CLIPBOARD!";
-        } else {
-            const shrinkCA = this.game.isLandscape ? this.game.CONTRACT_ADDRESS : this.game.CONTRACT_ADDRESS.substring(0, 15) + "...";
-            caText = `CA: ${shrinkCA} 📋`;
-        }
-        this.drawGlowText(ctx, caText, this.menuCaRect, this.game.isLandscape ? 35 * this.game.screenScale : 45 * this.game.screenScale);
-
         if (this.game.isDevMode) {
             ctx.fillStyle = "rgba(0, 255, 0, 0.8)";
             ctx.font = `${30 * this.game.screenScale}px "VT323", monospace`;
@@ -444,6 +433,50 @@ export class SceneRenderer {
         this.drawGlowText(ctx, "LEADERBOARDS", this.settingsLeaderboardRect, ts);
         this.drawGlowText(ctx, "TUTORIAL", this.settingsTutorialRect, ts);
         this.drawGlowText(ctx, "ABOUT", this.settingsAboutRect, ts);
+    }
+
+    private drawWinnersPage(ctx: CanvasRenderingContext2D, pageIndex: number, title: string, subtitle: string, entries: { name: string; expiresAt: number }[]) {
+        const w = this.game.canvas.width, scale = this.game.screenScale, land = this.game.isLandscape;
+        const pageCenterX = (pageIndex * w) + (w / 2);
+
+        ctx.fillStyle = "#FFD700";
+        ctx.font = `${land ? 50 * scale : 80 * scale}px "VT323", monospace`;
+        const titleY = land ? 260 * scale : 360 * scale;
+        ctx.fillText("★ " + title + " ★", pageCenterX, titleY);
+
+        ctx.fillStyle = "cyan";
+        ctx.font = `${land ? 28 * scale : 42 * scale}px "VT323", monospace`;
+        ctx.fillText(subtitle, pageCenterX, titleY + (land ? 55 : 80) * scale);
+
+        const colRank = pageCenterX - (350 * scale);
+        const colStatus = pageCenterX + (350 * scale);
+        const headerY = titleY + (land ? 120 * scale : 170 * scale);
+        ctx.font = `${land ? 35 * scale : 55 * scale}px "VT323", monospace`;
+        ctx.fillText("RANK", colRank, headerY); ctx.fillText("PILOT", pageCenterX, headerY); ctx.fillText("UNLOCK", colStatus, headerY);
+
+        let entryY = headerY + (land ? 70 : 100) * scale;
+        if (!entries || entries.length === 0) {
+            ctx.fillStyle = "gray";
+            ctx.fillText("NO CHAMPIONS CROWNED YET", pageCenterX, entryY + 60 * scale);
+            ctx.font = `${land ? 26 * scale : 40 * scale}px "VT323", monospace`;
+            ctx.fillText("Climb the boards to claim the throne", pageCenterX, entryY + (land ? 115 : 160) * scale);
+            return;
+        }
+        for (let r = 0; r < entries.length; r++) {
+            const e = entries[r];
+            const msLeft = e.expiresAt - Date.now();
+            ctx.fillStyle = r === 0 ? "#FFD700" : "white";
+            ctx.fillText((r + 1).toString(), colRank, entryY);
+            ctx.fillText(e.name.substring(0, 12), pageCenterX, entryY);
+            if (msLeft > 0) {
+                ctx.fillStyle = "lime";
+                ctx.fillText(`ACTIVE ${Math.floor(msLeft / 3600000)}h ${Math.floor((msLeft % 3600000) / 60000)}m`, colStatus, entryY);
+            } else {
+                ctx.fillStyle = "gray";
+                ctx.fillText("ENDED", colStatus, entryY);
+            }
+            entryY += (land ? 55 : 85) * scale;
+        }
     }
 
     public drawLeaderboardsScreen(ctx: CanvasRenderingContext2D) {
@@ -499,15 +532,25 @@ export class SceneRenderer {
             if (this.game.leaderboardScrollY[i] < 0) this.game.leaderboardScrollY[i] = 0;
             ctx.restore();
         }
+
+        // Pages 10 & 11: reward champions
+        this.drawWinnersPage(ctx, 9, "DAILY CHAMPIONS", "TOP 3 EACH DAY — ALL MODES & SHIPS UNLOCKED FOR 24 HOURS", this.game.dailyWinners);
+        this.drawWinnersPage(ctx, 10, "WEEKLY CHAMPIONS", "TOP 10 EACH WEEK — ALL UNLOCKED FOR 72 HOURS", this.game.weeklyWinners);
         ctx.restore();
 
-        const dotSpacing = 50 * this.game.screenScale, startX = (this.game.canvas.width / 2) - (4 * dotSpacing), dotY = this.game.canvas.height - (this.game.isLandscape ? 60 * this.game.screenScale : 120 * this.game.screenScale);
-        const currentPage = Math.max(0, Math.min(8, Math.round(this.game.leaderboardScrollX / this.game.canvas.width)));
-        for (let i = 0; i < 9; i++) { ctx.fillStyle = i === currentPage ? "white" : "darkgray"; ctx.beginPath(); ctx.arc(startX + (i * dotSpacing), dotY, 10 * this.game.screenScale, 0, Math.PI * 2); ctx.fill(); }
+        const totalPages = this.game.LB_PAGE_COUNT;
+        const dotSpacing = 50 * this.game.screenScale, startX = (this.game.canvas.width / 2) - (((totalPages - 1) / 2) * dotSpacing), dotY = this.game.canvas.height - (this.game.isLandscape ? 60 * this.game.screenScale : 120 * this.game.screenScale);
+        const currentPage = Math.max(0, Math.min(totalPages - 1, Math.round(this.game.leaderboardScrollX / this.game.canvas.width)));
+        for (let i = 0; i < totalPages; i++) {
+            // Champion pages get gold dots so they're discoverable
+            if (i >= 9) ctx.fillStyle = i === currentPage ? "#FFD700" : "#6b5900";
+            else ctx.fillStyle = i === currentPage ? "white" : "darkgray";
+            ctx.beginPath(); ctx.arc(startX + (i * dotSpacing), dotY, 10 * this.game.screenScale, 0, Math.PI * 2); ctx.fill();
+        }
 
         ctx.fillStyle = "white"; ctx.font = `${this.game.isLandscape ? 100 * this.game.screenScale : 150 * this.game.screenScale}px "VT323", monospace`;
         if (currentPage > 0) ctx.fillText("<", this.leaderboardLeftArrowRect.centerX(), this.leaderboardLeftArrowRect.centerY());
-        if (currentPage < 8) ctx.fillText(">", this.leaderboardRightArrowRect.centerX(), this.leaderboardRightArrowRect.centerY());
+        if (currentPage < totalPages - 1) ctx.fillText(">", this.leaderboardRightArrowRect.centerX(), this.leaderboardRightArrowRect.centerY());
     }
 
     public drawCustomizeScreen(ctx: CanvasRenderingContext2D) {

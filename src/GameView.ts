@@ -110,8 +110,9 @@ export class GameView {
     
     public aboutScrollY: number = 0;
     public tokenomicsScrollY: number = 0;
+    public readonly LB_PAGE_COUNT = 11; // 9 score boards + DAILY CHAMPIONS + WEEKLY CHAMPIONS
     public leaderboardScrollX: number = 0;
-    public leaderboardScrollY: number[] = [0,0,0,0,0,0,0,0,0];
+    public leaderboardScrollY: number[] = [0,0,0,0,0,0,0,0,0,0,0];
     public leaderboardsLoading: boolean = false;
     public leaderboardsData: any[][] = [[],[],[],[],[],[],[],[],[]];
     private isDragging: boolean = false;
@@ -215,7 +216,26 @@ export class GameView {
         }
     }
 
+    public dailyWinners: { name: string; expiresAt: number }[] = [];
+    public weeklyWinners: { name: string; expiresAt: number }[] = [];
+
+    // Most recent champion batch per tier (read-only RPC over reward_grants)
+    public async fetchRewardWinners() {
+        try {
+            const res = await fetch(`${this.supabaseUrl}/rest/v1/rpc/get_reward_winners`, {
+                method: 'POST',
+                headers: { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}`, 'Content-Type': 'application/json' },
+                body: '{}'
+            });
+            const rows = await res.json();
+            if (!Array.isArray(rows)) return;
+            this.dailyWinners = rows.filter((r: any) => r.tier === 'daily_top3').map((r: any) => ({ name: r.player_name, expiresAt: new Date(r.expires_at).getTime() }));
+            this.weeklyWinners = rows.filter((r: any) => r.tier === 'weekly_top10').map((r: any) => ({ name: r.player_name, expiresAt: new Date(r.expires_at).getTime() }));
+        } catch (e) { /* RPC not deployed yet - pages will show NO CHAMPIONS */ }
+    }
+
     public fetchLeaderboards() {
+        this.fetchRewardWinners();
         this.leaderboardsLoading = true;
         const headers = { 'apikey': this.supabaseKey, 'Authorization': `Bearer ${this.supabaseKey}` };
 
@@ -242,8 +262,7 @@ export class GameView {
     //   burned = INITIAL_TOKEN_SUPPLY - current on-chain supply. Trustless,
     //   always accurate, no database needed.
     private fetchGlobalStats() {
-        this.fetchActivePilots();
-        this.fetchTokensBurned();
+        // Pilots/burn counters now live on the 2bitArcade landing page
         this.fetchActiveReward();
     }
 
@@ -452,13 +471,12 @@ export class GameView {
                 return false;
             }
 
-            console.log(`[BURN] Confirmed. ${amount} $JMP permanently destroyed. Sig: ${signature}`);
+            console.log(`[BURN] Confirmed. ${amount} $2BA permanently destroyed. Sig: ${signature}`);
 
             // 7. Update local state + notify backend (fire-and-forget).
             this.tokenBalance -= amount;
             await this.evaluateShipUnlocks(); this.updateStringCache();
             this.reportBurnToSupabase(amount, signature);
-            this.fetchTokensBurned(); // refresh the global burn counter with the new on-chain supply
 
             return true;
         } catch (e) {
@@ -504,9 +522,28 @@ export class GameView {
         this.currentDifficulty = diffVal === 0 ? Difficulty.EASY : (diffVal === 1 ? Difficulty.MEDIUM : Difficulty.HARD);
         const savedObs = await this.getData('obstacle_mode'); this.obstacleMode = parseInt(savedObs || '0') || 0;
 
-        // Restore a previously saved watch-mode wallet (pump.fun / pasted address)
+        // Restore the wallet connected on the 2bitArcade landing page (or a prior session):
+        // 1) extension wallet via silent reconnect, 2) watch-mode pasted address.
+        const walletType = await this.getData('walletType');
+        if (!this.isDevMode && walletType) {
+            const w = window as any;
+            const provider = walletType === 'phantom' ? (w.phantom?.solana || w.solana)
+                : walletType === 'solflare' ? w.solflare
+                : walletType === 'backpack' ? w.backpack : null;
+            if (provider) {
+                try {
+                    const resp = await provider.connect({ onlyIfTrusted: true });
+                    this.userPublicKey = resp?.publicKey?.toString() || provider.publicKey?.toString() || "";
+                    if (this.userPublicKey) {
+                        this.walletConnected = true; this.watchOnlyMode = false;
+                        (window as any).activeSolanaProvider = provider;
+                        this.syncOnChainTokenBalance(); this.fetchActiveReward();
+                    }
+                } catch (e) { /* not pre-authorized - CONNECT WALLET in-game still works */ }
+            }
+        }
         const watchAddr = await this.getData('watchAddress');
-        if (!this.isDevMode && watchAddr && this.isValidSolanaAddress(watchAddr)) {
+        if (!this.walletConnected && !this.isDevMode && watchAddr && this.isValidSolanaAddress(watchAddr)) {
             this.userPublicKey = watchAddr; this.walletConnected = true; this.watchOnlyMode = true;
             this.syncOnChainTokenBalance(); // async, fire-and-forget
         }
@@ -555,13 +592,13 @@ export class GameView {
             else if (this.currentState === GameState.TOKENOMICS) this.tokenomicsScrollY -= dy * 1.5;
             else if (this.currentState === GameState.LEADERBOARDS) {
                 this.leaderboardScrollX -= dx * 1.5;
-                const page = Math.max(0, Math.min(8, Math.round(this.leaderboardScrollX / this.canvas.width)));
+                const page = Math.max(0, Math.min(this.LB_PAGE_COUNT - 1, Math.round(this.leaderboardScrollX / this.canvas.width)));
                 this.leaderboardScrollY[page] -= dy * 1.5;
             }
         });
         window.addEventListener('pointerup', () => { 
             this.isBoosting = false; this.isDragging = false; 
-            if (this.currentState === GameState.LEADERBOARDS) { this.leaderboardScrollX = Math.max(0, Math.min(8, Math.round(this.leaderboardScrollX / this.canvas.width))) * this.canvas.width; }
+            if (this.currentState === GameState.LEADERBOARDS) { this.leaderboardScrollX = Math.max(0, Math.min(this.LB_PAGE_COUNT - 1, Math.round(this.leaderboardScrollX / this.canvas.width))) * this.canvas.width; }
         });
         window.addEventListener('keydown', (e) => {
             if (document.getElementById("intro-video-overlay")) return; // intro handles its own keys
@@ -612,7 +649,7 @@ export class GameView {
             else if (this.currentState === GameState.MENU) { this.audio.playClickSound(); this.obstacleMode = (this.obstacleMode - 1 + 3) % 3; await this.setData("obstacle_mode", this.obstacleMode.toString()); this.applyDifficulty(); this.updateStringCache(); }
         }
         else if (code === 'ArrowRight') {
-            if (this.currentState === GameState.LEADERBOARDS) { this.audio.playClickSound(); this.leaderboardScrollX = Math.min(8 * this.canvas.width, this.leaderboardScrollX + this.canvas.width); } 
+            if (this.currentState === GameState.LEADERBOARDS) { this.audio.playClickSound(); this.leaderboardScrollX = Math.min((this.LB_PAGE_COUNT - 1) * this.canvas.width, this.leaderboardScrollX + this.canvas.width); } 
             else if (this.currentState === GameState.HANGAR) { this.audio.playClickSound(); this.currentShipIndex = (this.currentShipIndex + 1) % this.shipResIds.length; } 
             else if (this.currentState === GameState.CUSTOMIZE) { this.audio.playClickSound(); const nextBg = (this.bgColorIndex + 1) % this.bgImageIds.length; this.bgColorIndex = nextBg; await this.setData("bgColorIndex", this.bgColorIndex.toString()); this.audio.playThemeMusic(this.bgColorIndex); } 
             else if (this.currentState === GameState.MENU) { this.audio.playClickSound(); this.obstacleMode = (this.obstacleMode + 1) % 3; await this.setData("obstacle_mode", this.obstacleMode.toString()); this.applyDifficulty(); this.updateStringCache(); }
@@ -644,7 +681,7 @@ export class GameView {
         title.style.cssText = "color:#FFF; font-size:38px; margin:0 0 30px 0; letter-spacing:2px;";
         modal.appendChild(title);
 
-        const createWalletButton = (name: string, checkProvider: () => any, downloadUrl: string) => {
+        const createWalletButton = (name: string, walletType: string, checkProvider: () => any, downloadUrl: string) => {
             const btn = document.createElement("button");
             btn.innerText = name;
             btn.style.cssText = "width:100%; padding:15px; margin:10px 0; font-size:28px; font-family:'VT323', monospace; cursor:pointer; background-color:#222; color:#00FFFF; border:2px solid #00FFFF; transition:all 0.2s ease;";
@@ -657,6 +694,7 @@ export class GameView {
                         const response = await provider.connect();
                         this.userPublicKey = (response.publicKey ? response.publicKey.toString() : response.toString());
                         this.walletConnected = true; this.watchOnlyMode = false; (window as any).activeSolanaProvider = provider;
+                        await this.setData('walletType', walletType); // arcade landing + other games silently reconnect with this
                         await this.setData('watchAddress', ''); // extension wallet supersedes any saved watch address
                         await this.syncOnChainTokenBalance();
                         this.fetchActiveReward(); // identity changed to WL_... - re-check for an active reward
@@ -667,9 +705,9 @@ export class GameView {
             return btn;
         };
 
-        modal.appendChild(createWalletButton("1. PHANTOM", () => (window as any).phantom?.solana || (window as any).solana, "https://phantom.app/"));
-        modal.appendChild(createWalletButton("2. SOLFLARE", () => (window as any).solflare, "https://solflare.com/"));
-        modal.appendChild(createWalletButton("3. BACKPACK", () => (window as any).backpack, "https://backpack.app/"));
+        modal.appendChild(createWalletButton("1. PHANTOM", "phantom", () => (window as any).phantom?.solana || (window as any).solana, "https://phantom.app/"));
+        modal.appendChild(createWalletButton("2. SOLFLARE", "solflare", () => (window as any).solflare, "https://solflare.com/"));
+        modal.appendChild(createWalletButton("3. BACKPACK", "backpack", () => (window as any).backpack, "https://backpack.app/"));
 
         // Pump.fun's built-in wallet has no browser extension and cannot sign on
         // external sites, so those players connect by pasting their address
@@ -690,7 +728,7 @@ export class GameView {
                 this.audio.playClickSound();
                 this.walletConnected = false; this.watchOnlyMode = false; this.userPublicKey = ""; this.tokenBalance = 0;
                 (window as any).activeSolanaProvider = null;
-                await this.setData('watchAddress', '');
+                await this.setData('watchAddress', ''); await this.setData('walletType', '');
                 await this.evaluateShipUnlocks(); this.updateStringCache();
                 document.body.removeChild(overlay);
             };
@@ -714,7 +752,7 @@ export class GameView {
         modal.appendChild(title);
 
         const hint = document.createElement("p");
-        hint.innerText = "Pump.fun players: open pump.fun, tap your profile picture, and copy your wallet address. Holding $JMP there unlocks modes, ships & backgrounds. NOTE: revives (token burns) need a signing wallet - import your pump.fun key into Phantom to use them.";
+        hint.innerText = "Pump.fun players: open pump.fun, tap your profile picture, and copy your wallet address. Holding $2BA there unlocks modes, ships & backgrounds. NOTE: revives (token burns) need a signing wallet - import your pump.fun key into Phantom to use them.";
         hint.style.cssText = "color:#AAA; font-size:19px; line-height:1.35; margin:0 0 20px 0; text-align:left;";
         modal.appendChild(hint);
 
@@ -765,7 +803,7 @@ export class GameView {
         this.walletConnected = true;
         this.watchOnlyMode = true;
         (window as any).activeSolanaProvider = null;
-        await this.setData('watchAddress', this.userPublicKey);
+        await this.setData('watchAddress', this.userPublicKey); await this.setData('walletType', '');
         await this.syncOnChainTokenBalance();
         this.fetchActiveReward(); // identity changed to WL_... - re-check for an active reward
         console.log(`[WALLET] Watch-only connection: ${this.userPublicKey}`);
@@ -798,12 +836,7 @@ export class GameView {
         if (this.audio.isMusicEnabled) this.audio.resumeMusic(this.bgColorIndex);
 
         if (this.currentState === GameState.MENU) {
-            if (this.renderer.menuTokenomicsRect.contains(x, y)) { this.audio.playClickSound(); this.stateBeforeSettings = this.currentState; this.currentState = GameState.TOKENOMICS; }
-            if (this.renderer.menuCaRect.contains(x, y)) {
-                this.audio.playClickSound();
-                try { navigator.clipboard.writeText(this.CONTRACT_ADDRESS); } catch (e) {}
-                this.caCopiedTimer = 60;
-            }
+            // Tokenomics + CA moved to the 2bitArcade landing page
             if (this.renderer.menuWalletRect.contains(x, y)) { this.audio.playClickSound(); await this.connectSolanaWallet(); }
             if (this.renderer.menuTapToStartRect.contains(x, y)) { 
                 if (!this.isObstacleModeUnlocked(this.obstacleMode)) {
@@ -1019,7 +1052,7 @@ export class GameView {
 
     public getShipTitle(index: number): string { switch (index) { case 0: return "THE COSMIC VANGUARD"; case 1: return "EXO-117"; case 2: return "HELIOS VANGUARD"; case 3: return "EMERALD DREADNOUGHT"; case 4: return "OBSIDIAN FURY"; case 5: return "STARSHIP ODYSSEY"; default: return "UNKNOWN SHIP"; } }
     public getShipFullDescription(index: number): string { let d = ""; let m = 0; let i = ""; switch (index) { case 0: d = "A reliable interceptor balanced for all missions."; m = 1; break; case 1: d = "A tactical fighter designed for high-speed evasion."; m = 2; break; case 2: d = "An elegant royal guard vessel with solar fins."; m = 3; break; case 3: d = "A heavy-armored siege bomber with fusion bay."; m = 5; break; case 4: d = "Classified stealth striker. Built on volatile plasma."; i = " Starts with 1 shield."; m = 5; break; case 5: d = "A legendary deep-space pioneer. Max firepower."; i = " Starts with 2 shields, gains 1 every 20 pts."; m = 5; break; } return `${d} ${i} (Max shields: ${m})`; }
-    public getShipUnlockCondition(index: number): string { if (index === 0) return "Unlocked by default."; return `Hold ${this.shipTokenThresholds[index].toLocaleString()} $JMP Tokens`; }
+    public getShipUnlockCondition(index: number): string { if (index === 0) return "Unlocked by default."; return `Hold ${this.shipTokenThresholds[index].toLocaleString()} $2BA Tokens`; }
 
     public resetGame() {
         this.birdY = this.canvas.height / 2; this.velocity = 0; this.shipRotation = 0; this.score = 0; this.scoreStr = "Score: 0"; this.obstacles = [];

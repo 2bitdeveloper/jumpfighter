@@ -1,0 +1,136 @@
+/* Container for the modal */
+#settings-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: none; /* Hidden by default */
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    font-family: 'origraph', sans-serif;
+}
+
+.settings-dialog {
+    background: #2C363F;
+    width: 90%;
+    max-width: 450px;
+    max-height: 85vh;
+    padding: 24px;
+    border-radius: 12px;
+    overflow-y: auto;
+    color: white;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.settings-dialog h2 {
+    text-align: center;
+    color: #FF7B54;
+    opacity: 0.85; /* Replicating your #55FF7B54 feel */
+    margin-bottom: 24px;
+    font-size: 24px;
+    text-transform: uppercase;
+}
+
+.setting-group {
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.setting-group label {
+    margin-bottom: 8px;
+    font-size: 16px;
+}
+
+/* Custom Sliders (SeekBars) */
+input[type="range"] {
+    accent-color: #FF7B54;
+    cursor: pointer;
+}
+
+/* Switch Styling */
+.switch-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    margin-bottom: 16px;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.switch input { opacity: 0; width: 0; height: 0; }
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #455A64;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px; width: 18px;
+    left: 4px; bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .slider { background-color: #FF7B54; }
+input:checked + .slider:before { transform: translateX(24px); }
+
+/* Radio Group (FPS) */
+.radio-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 24px;
+}
+
+.radio-item {
+    flex: 1;
+    text-align: center;
+    background: #455A64;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.radio-item.active {
+    background: #FF7B54;
+}
+
+/* Buttons */
+.btn-primary {
+    background: #FF7B54;
+    color: white;
+    border: none;
+    padding: 12px;
+    width: 100%;
+    border-radius: 6px;
+    font-weight: bold;
+    margin-bottom: 16px;
+    cursor: pointer;
+    font-family: 'origraph', sans-serif;
+}
+
+.btn-secondary {
+    background: #455A64;
+    color: white;
+    border: none;
+    padding: 12px;
+    width: 100%;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: 'origraph', sans-serif;
+}

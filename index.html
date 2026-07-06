@@ -1,18 +1,100 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JumpFighter | Solana Arcade Runner</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2bitArcade | Play. Hold. Burn.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
-    <style>
-        /* Zero out the browser and lock the canvas to fullscreen */
-        * { margin: 0; padding: 0; box-sizing: border-box; overflow: hidden; background-color: #000; }
-        canvas { display: block; width: 100vw; height: 100vh; }
-    </style>
-</head>
-<body>
-    <canvas id="gameCanvas"></canvas>
-    <script type="module" src="/src/main.ts"></script>
-</body>
+    <link rel="stylesheet" href="/src/arcade/arcade.css" />
+  </head>
+  <body>
+    <div id="arcade-root">
+
+      <header id="arcade-header">
+        <h1 id="arcade-title">2BIT<span>ARCADE</span></h1>
+        <div id="stats-bar">
+          <div class="stat-chip" id="stat-pilots">&#9679; Syncing pilots...</div>
+          <div class="stat-chip" id="stat-burned">&#128293; Syncing burn...</div>
+          <button id="wallet-btn">CONNECT WALLET</button>
+        </div>
+      </header>
+
+      <main>
+        <!-- LAZY SUSAN GAME SELECTOR -->
+        <section id="selector">
+          <button class="susan-arrow" id="susan-left">&lt;</button>
+          <div id="susan-stage">
+            <div id="susan-ring"><!-- panels injected by arcade.ts --></div>
+          </div>
+          <button class="susan-arrow" id="susan-right">&gt;</button>
+        </section>
+
+        <section id="game-info">
+          <h2 id="game-title"></h2>
+          <p id="game-desc"></p>
+          <button id="play-btn">INSERT COIN &#9654; PLAY</button>
+        </section>
+
+        <!-- CONTRACT ADDRESS -->
+        <section id="ca-section">
+          <span id="ca-chip" title="Tap to copy">CA: <b id="ca-text"></b> &#128203;</span>
+        </section>
+
+        <!-- TOKENOMICS -->
+        <section id="tokenomics">
+          <h2>$2BA TOKENOMICS</h2>
+
+          <div class="tok-block">
+            <h3>FIXED SUPPLY. FOREVER.</h3>
+            <p>1,000,000,000 $2BA minted at launch &mdash; and that is the most that will ever
+            exist. There is no mint authority to print more. 2% (20,000,000) is reserved for the
+            developer; everything else lives on the open market.</p>
+          </div>
+
+          <div class="tok-block">
+            <h3>THE BURN ENGINE</h3>
+            <p>Dying isn't the end in the 2bitArcade &mdash; reviving mid-run costs
+            <b>1,000 $2BA</b>. But those tokens aren't transferred to some "burn wallet" where
+            they technically still exist. Every revive executes the <b>SPL Token burn
+            instruction</b>: the tokens are destroyed at the mint itself, and the total supply
+            of $2BA literally decreases on-chain. Open the mint on Solscan and watch the supply
+            number fall with every death defied. The counter at the top of this page reads that
+            same on-chain figure live.</p>
+          </div>
+
+          <div class="tok-block">
+            <h3>WHY SHRINKING SUPPLY MATTERS</h3>
+            <p>Supply only moves in one direction: down. Every revive, by every player, in every
+            game, permanently removes $2BA from existence. The tokens in your wallet therefore
+            represent a continuously growing share of everything that exists &mdash; the more the
+            arcade is played, the scarcer $2BA becomes. Scarcity is one side of the value
+            equation; demand is the other. Nothing here is financial advice &mdash; verify the
+            burn yourself on-chain and draw your own conclusions.</p>
+          </div>
+
+          <div class="tok-block">
+            <h3>HOLD TO UNLOCK</h3>
+            <p>Your $2BA balance is your arcade pass. Ships, guardians, game modes and
+            backgrounds unlock by <b>holding</b> tokens in your connected wallet &mdash; never by
+            spending them. Connect once up top; every cabinet in the arcade reads the same
+            wallet.</p>
+          </div>
+
+          <div class="tok-block">
+            <h3>CHAMPION REWARDS</h3>
+            <p>Every day, the <b>top 3 pilots</b> across the arcade earn 24 hours with everything
+            unlocked. Every week, the <b>top 10</b> earn a 72-hour full unlock. Skill is the
+            other currency here.</p>
+          </div>
+        </section>
+      </main>
+
+      <footer id="arcade-footer">
+        <span>Developed by 2bit Developer</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/arcade/arcade.ts"></script>
+  </body>
 </html>
