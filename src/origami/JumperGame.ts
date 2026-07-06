@@ -66,6 +66,7 @@ export class JumperGame {
     public onLoadingComplete: (() => void) | null = null;
 
     public revivesUsedThisRun: number = 0;
+    public reviveInFlight: boolean = false; // burn transaction pending wallet approval
     public tutorialPhase: number = 1;
     public currentCharacter: string = "crane";
 
@@ -1031,14 +1032,20 @@ export class JumperGame {
             }
             else if (this.currentGameState === GameStates.GAME_OVER) {
                 if (this.internalRenderer.reviveButtonRect.contains(ex, ey)) {
-                    const currentReviveCost = 100 * (1 << this.revivesUsedThisRun);
-
-                    if (this.totalCoins >= currentReviveCost) {
-                        this.totalCoins -= currentReviveCost;
-                        this.revivesUsedThisRun++;
-                        this.setPrefs("total_coins", this.totalCoins);
-                        this.revivePlayer();
-                        this.audio.startBGM();
+                    // Revive burns $2BA on-chain (SPL burn - supply shrinks), same as Jump Fighter.
+                    // The revive only fires AFTER the transaction confirms.
+                    if (!this.reviveInFlight && Web3Service.canSign() && Web3Service.tokenBalance >= Web3Service.REVIVE_COST) {
+                        this.reviveInFlight = true;
+                        Web3Service.executeBurnTransaction(Web3Service.REVIVE_COST).then((ok) => {
+                            this.reviveInFlight = false;
+                            if (ok && this.currentGameState === GameStates.GAME_OVER) {
+                                this.revivesUsedThisRun++;
+                                this.revivePlayer();
+                                this.audio.startBGM();
+                            } else if (!ok) {
+                                this.triggerHaptic();
+                            }
+                        });
                     } else {
                         this.triggerHaptic();
                     }

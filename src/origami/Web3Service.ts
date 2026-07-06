@@ -23,6 +23,9 @@ export class Web3Service {
     public static userPublicKey = "";
     public static tokenBalance = 0;
     public static rewardUnlockUntil = 0; // epoch ms (daily/weekly champion reward)
+    public static readonly REVIVE_COST = 1000; // $2BA burned per revive (matches Jump Fighter)
+    public static readonly DEV_MODE = false;   // true = simulate burns for local testing
+    private static burnInProgress = false;
 
     private static sessionPlayerName = `Guest_${Math.floor(Math.random() * 9000) + 1000}`;
     private static presenceSessionId =
@@ -122,6 +125,86 @@ export class Web3Service {
             const expires = await res.json();
             this.rewardUnlockUntil = (typeof expires === 'string') ? new Date(expires).getTime() : 0;
         } catch (e) { /* rewards RPC unreachable - fall back to balance gating */ }
+    }
+
+    // ---------- ON-CHAIN BURN (revives) ----------
+    // Watch-mode wallets can't sign; only extension wallets restored with a
+    // provider can burn. Uses the SPL burn instruction: supply shrinks on-chain.
+    public static canSign(): boolean {
+        return this.walletConnected && !!(window as any).activeSolanaProvider;
+    }
+
+    public static async executeBurnTransaction(amount: number): Promise<boolean> {
+        if (this.DEV_MODE) { this.tokenBalance -= amount; console.log(`[DEV] Simulated burn of ${amount}`); return true; }
+        if (!this.walletConnected || !this.userPublicKey) return false;
+        const provider = (window as any).activeSolanaProvider;
+        if (!provider) {
+            this.showToast("Revives need a signing wallet. Connect Phantom/Solflare on the Arcade home page.");
+            return false;
+        }
+        if (this.burnInProgress) return false;
+        this.burnInProgress = true;
+        try {
+            // Lazy-load web3 libs + polyfills so the game boots without them
+            const w = window as any;
+            if (typeof w.global === 'undefined') w.global = window;
+            if (typeof w.process === 'undefined') w.process = { env: {} };
+            if (typeof w.Buffer === 'undefined') {
+                try { const b = await import('buffer'); w.Buffer = b.Buffer; } catch (e) {}
+            }
+            const { Connection, PublicKey, Transaction } = await import('@solana/web3.js');
+            const { createBurnInstruction } = await import('@solana/spl-token');
+
+            const connection = new Connection(this.SOLANA_RPC_URL, 'confirmed');
+            const owner = new PublicKey(this.userPublicKey);
+            const mint = new PublicKey(this.TARGET_TOKEN_MINT);
+
+            const resp = await connection.getParsedTokenAccountsByOwner(owner, { mint });
+            if (resp.value.length === 0) return false;
+            const tokenAccountPubkey = resp.value[0].pubkey;
+            const tokenProgramId = resp.value[0].account.owner;
+            const info = resp.value[0].account.data.parsed.info;
+            const decimals: number = info.tokenAmount.decimals;
+            const uiBalance: number = info.tokenAmount.uiAmount || 0;
+            if (uiBalance < amount) { this.tokenBalance = uiBalance; return false; }
+
+            const rawAmount = BigInt(amount) * (10n ** BigInt(decimals));
+            const tx = new Transaction().add(
+                createBurnInstruction(tokenAccountPubkey, mint, owner, rawAmount, [], tokenProgramId)
+            );
+            const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+            tx.recentBlockhash = blockhash;
+            tx.feePayer = owner;
+
+            let signature: string;
+            if (typeof provider.signAndSendTransaction === 'function') {
+                const r = await provider.signAndSendTransaction(tx);
+                signature = typeof r === 'string' ? r : r.signature;
+            } else {
+                const signed = await provider.signTransaction(tx);
+                signature = await connection.sendRawTransaction(signed.serialize());
+            }
+            const conf = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+            if (conf.value.err) return false;
+
+            console.log(`[BURN] ${amount} $2BA destroyed. Sig: ${signature}`);
+            this.tokenBalance -= amount;
+            return true;
+        } catch (e) {
+            console.error("[BURN] Failed or rejected", e);
+            return false;
+        } finally {
+            this.burnInProgress = false;
+        }
+    }
+
+    private static showToast(message: string) {
+        document.getElementById('arcade-toast')?.remove();
+        const t = document.createElement('div');
+        t.id = 'arcade-toast'; t.innerText = message;
+        t.style.cssText = "position:fixed; bottom:6%; left:50%; transform:translateX(-50%); max-width:80vw; background:#111; color:#FF9900; border:2px solid #FF9900; padding:12px 20px; font-family:system-ui,sans-serif; font-size:16px; z-index:99998; text-align:center;";
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 5000);
     }
 
     // ---------- LEADERBOARD ----------

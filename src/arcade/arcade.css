@@ -42,12 +42,19 @@ body, html {
   text-shadow: 0 0 10px var(--cyan); transition: all 0.15s ease;
 }
 #wallet-btn:hover { background: var(--cyan); color: #000; box-shadow: 0 0 18px var(--cyan); }
+#contact-btn {
+  font-family: 'VT323', monospace; font-size: 22px; padding: 8px 20px; cursor: pointer;
+  color: var(--neon); background: rgba(40, 20, 0, 0.6); border: 2px solid var(--neon);
+  text-shadow: 0 0 10px var(--neon); transition: all 0.15s ease;
+}
+#contact-btn:hover { background: var(--neon); color: #000; box-shadow: 0 0 18px var(--neon); }
 
 /* ---------- LAZY SUSAN ---------- */
-#selector { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 30px; }
+#selector { display: flex; align-items: center; justify-content: center; gap: 36px; margin-top: 30px; }
 #susan-stage {
   width: min(520px, 78vw); height: min(560px, 92vw);
   perspective: 1400px; overflow: visible;
+  touch-action: pan-y; /* vertical page scroll stays native; horizontal drags become swipes */
 }
 #susan-ring {
   width: 100%; height: 100%; position: relative;
@@ -59,28 +66,31 @@ body, html {
   backface-visibility: hidden; cursor: pointer;
   transition: filter 0.6s ease, opacity 0.6s ease;
   filter: brightness(0.35) saturate(0.6); opacity: 0.75;
+  pointer-events: none; /* the panel spans the whole stage - don't let the invisible area eat clicks */
 }
+.susan-panel img, .susan-panel .soon-card { pointer-events: auto; } /* only the artwork is clickable */
 .susan-panel.active { filter: brightness(1); opacity: 1; }
 .susan-panel img {
-  max-width: 100%; max-height: 100%; object-fit: contain;
+  max-width: 60%; max-height: 60%; object-fit: contain;
   filter: drop-shadow(0 0 30px rgba(255, 120, 0, 0.35));
   user-select: none;
 }
 .susan-panel.active img { filter: drop-shadow(0 0 45px rgba(255, 150, 0, 0.65)); }
 
 .soon-card {
-  width: 70%; height: 82%; border: 3px dashed var(--neon);
+  width: 44%; height: 52%; border: 3px dashed var(--neon);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: rgba(20, 8, 40, 0.7); text-align: center;
 }
-.soon-card span { font-size: 120px; color: var(--neon); text-shadow: 0 0 25px var(--neon-hot); }
-.soon-card p { font-size: 30px; letter-spacing: 3px; margin: 10px 0 0; color: #ddd; }
+.soon-card span { font-size: 80px; color: var(--neon); text-shadow: 0 0 25px var(--neon-hot); }
+.soon-card p { font-size: 22px; letter-spacing: 3px; margin: 10px 0 0; color: #ddd; }
 
 .susan-arrow {
   font-family: 'VT323', monospace; font-size: 56px; line-height: 1; cursor: pointer;
   color: #fff; background: none; border: none; padding: 10px;
   text-shadow: 0 0 14px var(--neon);
   transition: transform 0.1s ease;
+  position: relative; z-index: 100; /* always above the 3D panels */
 }
 .susan-arrow:hover { transform: scale(1.25); }
 
@@ -121,8 +131,8 @@ body, html {
 /* ---------- FOOTER ---------- */
 #arcade-footer { text-align: center; margin-top: 50px; font-size: 20px; color: #888; }
 
-/* ---------- WALLET MODAL ---------- */
-#arcade-wallet-modal {
+/* ---------- WALLET + CONTACT MODALS ---------- */
+#arcade-wallet-modal, #arcade-contact-modal {
   position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 99999;
   display: flex; justify-content: center; align-items: center; font-family: 'VT323', monospace;
 }
@@ -146,6 +156,12 @@ body, html {
   background: #000; color: #00ff88; border: 2px solid var(--cyan); outline: none;
 }
 #wm-err { color: #ff5555; font-size: 18px; min-height: 22px; margin: 6px 0; }
+.ct-field {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; margin: 6px 0; font-size: 20px;
+  font-family: 'VT323', monospace; background: #000; color: #00ff88;
+  border: 2px solid var(--cyan); outline: none; resize: vertical;
+}
+#ct-err { color: #ff5555; font-size: 18px; min-height: 22px; margin: 6px 0; }
 .wm-cancel, .wm-disconnect {
   background: none; border: none; font-size: 22px; margin-top: 14px; cursor: pointer;
   font-family: 'VT323', monospace; display: block; width: 100%;

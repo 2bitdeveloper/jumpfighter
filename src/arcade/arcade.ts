@@ -43,13 +43,16 @@ const sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_
 // ============================================================
 // LAZY SUSAN CAROUSEL
 // ============================================================
-let susanIndex = 0;      // which game is front-and-center
-let susanAngle = 0;      // current ring rotation in degrees
-let autoSpinTimer: any = null;
-const STEP = 360 / GAMES.length; // 120deg per panel
+let susanIndex = 0;
+let susanAngle = 0;
+let autoSpinTimer: ReturnType<typeof setInterval> | null = null;
+let lastSwipeAt = 0; // suppress the click that follows a swipe
+const STEP = 360 / GAMES.length;
 
 function buildSusan() {
-    const ring = document.getElementById('susan-ring')!;
+    const ring = document.getElementById('susan-ring');
+    if (!ring) return;
+    ring.innerHTML = '';
     GAMES.forEach((g, i) => {
         const panel = document.createElement('div');
         panel.className = 'susan-panel';
@@ -64,14 +67,13 @@ function buildSusan() {
             panel.innerHTML = `<div class="soon-card"><span>?</span><p>MORE GAMES<br>COMING SOON</p></div>`;
         }
         panel.addEventListener('click', () => {
+            if (Date.now() - lastSwipeAt < 350) return; // that "click" was the end of a swipe
             const target = parseInt(panel.dataset.index!);
             if (target === susanIndex && GAMES[target].url) { launchGame(GAMES[target].url!); return; }
             rotateTo(target);
         });
         ring.appendChild(panel);
     });
-    document.getElementById('susan-left')!.addEventListener('click', () => rotateBy(-1));
-    document.getElementById('susan-right')!.addEventListener('click', () => rotateBy(1));
     applyRotation();
     updateInfo();
     startAutoSpin();
@@ -79,17 +81,18 @@ function buildSusan() {
 
 function rotateBy(dir: number) {
     susanIndex = (susanIndex + dir + GAMES.length) % GAMES.length;
-    susanAngle -= dir * STEP; // ring turns opposite to bring the panel forward
+    susanAngle -= dir * STEP;
     applyRotation(); updateInfo(); startAutoSpin();
 }
 
 function rotateTo(target: number) {
     const diff = (target - susanIndex + GAMES.length) % GAMES.length;
-    rotateBy(diff === 2 ? -1 : diff); // shortest path on a 3-ring
+    rotateBy(diff === 2 ? -1 : diff);
 }
 
 function applyRotation() {
-    const ring = document.getElementById('susan-ring')!;
+    const ring = document.getElementById('susan-ring');
+    if (!ring) return;
     ring.style.transform = `rotateY(${susanAngle}deg)`;
     document.querySelectorAll('.susan-panel').forEach((p) => {
         p.classList.toggle('active', parseInt((p as HTMLElement).dataset.index!) === susanIndex);
@@ -98,37 +101,75 @@ function applyRotation() {
 
 function updateInfo() {
     const g = GAMES[susanIndex];
-    document.getElementById('game-title')!.textContent = g.title;
-    document.getElementById('game-desc')!.textContent = g.desc;
-    const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
-    if (g.url) { playBtn.style.display = 'inline-block'; playBtn.textContent = 'INSERT COIN \u25B6 PLAY'; }
-    else { playBtn.style.display = 'none'; }
+    const title = document.getElementById('game-title');
+    const desc = document.getElementById('game-desc');
+    const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
+    if (title) title.textContent = g.title;
+    if (desc) desc.textContent = g.desc;
+    if (playBtn) {
+        if (g.url) { playBtn.style.display = 'inline-block'; playBtn.textContent = 'INSERT COIN \u25B6 PLAY'; }
+        else { playBtn.style.display = 'none'; }
+    }
 }
 
 function startAutoSpin() {
     if (autoSpinTimer) clearInterval(autoSpinTimer);
-    autoSpinTimer = setInterval(() => rotateBy(1), 6000); // the lazy in lazy Susan
+    autoSpinTimer = setInterval(() => rotateBy(1), 6000);
 }
 
-function launchGame(url: string) {
-    window.location.href = url;
+function launchGame(url: string) { window.location.href = url; }
+
+// ---------- ARROWS + KEYBOARD + SWIPE ----------
+function wireInputs() {
+    // The carousel arrow buttons (this wiring was missing - keyboard worked, clicks didn't)
+    document.getElementById('susan-left')?.addEventListener('click', () => rotateBy(-1));
+    document.getElementById('susan-right')?.addEventListener('click', () => rotateBy(1));
+
+    // Arrow keys rotate, Enter launches the front cabinet
+    window.addEventListener('keydown', (e) => {
+        if ((e.target as HTMLElement)?.tagName === 'INPUT') return; // typing a wallet address
+        if (document.getElementById('intro-video-overlay')) return; // intro handles its own keys
+        if (e.key === 'ArrowLeft') { e.preventDefault(); rotateBy(-1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); rotateBy(1); }
+        else if (e.key === 'Enter') {
+            const g = GAMES[susanIndex];
+            if (g.url) launchGame(g.url);
+        }
+    });
+
+    // Horizontal swipe / drag on the carousel stage
+    const stage = document.getElementById('susan-stage');
+    if (stage) {
+        let startX = 0, startY = 0, tracking = false;
+        stage.addEventListener('pointerdown', (e) => { tracking = true; startX = e.clientX; startY = e.clientY; });
+        stage.addEventListener('pointerup', (e) => {
+            if (!tracking) return; tracking = false;
+            const dx = e.clientX - startX, dy = e.clientY - startY;
+            if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                lastSwipeAt = Date.now();
+                rotateBy(dx < 0 ? 1 : -1); // swipe left -> next cabinet
+            }
+        });
+        stage.addEventListener('pointercancel', () => { tracking = false; });
+    }
 }
-document.getElementById('play-btn')!.addEventListener('click', () => {
-    const g = GAMES[susanIndex];
-    if (g.url) launchGame(g.url);
-});
 
 // ============================================================
 // LIVE STATS
 // ============================================================
-const presenceSessionId = (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const presenceSessionId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
+    ? (crypto as any).randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 async function fetchActivePilots() {
+    const el = document.getElementById('stat-pilots');
+    if (!el) return;
     try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_active_pilots`, { method: 'POST', headers: sbHeaders, body: '{}' });
         const count = await res.json();
-        if (typeof count === 'number') document.getElementById('stat-pilots')!.innerHTML = `\u25CF ${count.toLocaleString()} Active Pilot${count === 1 ? '' : 's'}`;
-    } catch (e) { document.getElementById('stat-pilots')!.innerHTML = '\u25CF -- Active Pilots'; }
+        if (typeof count === 'number') { el.innerHTML = `\u25CF ${count.toLocaleString()} Active Player${count === 1 ? '' : 's'}`; return; }
+        throw new Error();
+    } catch (e) { el.innerHTML = '\u25CF -- Active Players'; }
 }
 
 function formatCompact(n: number): string {
@@ -139,6 +180,8 @@ function formatCompact(n: number): string {
 }
 
 async function fetchTokensBurned() {
+    const el = document.getElementById('stat-burned');
+    if (!el) return;
     try {
         const res = await fetch(SOLANA_RPC_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -148,11 +191,11 @@ async function fetchTokensBurned() {
         const supply = data.result?.value?.uiAmount;
         if (typeof supply === 'number') {
             const burned = Math.max(0, INITIAL_TOKEN_SUPPLY - supply);
-            document.getElementById('stat-burned')!.innerHTML = `\uD83D\uDD25 ${formatCompact(burned)} $2BA Burned`;
+            el.innerHTML = `\uD83D\uDD25 ${formatCompact(burned)} $2BA Burned`;
             return;
         }
         throw new Error();
-    } catch (e) { document.getElementById('stat-burned')!.innerHTML = '\uD83D\uDD25 -- $2BA Burned'; }
+    } catch (e) { el.innerHTML = '\uD83D\uDD25 -- $2BA Burned'; }
 }
 
 function startPresence() {
@@ -171,7 +214,8 @@ function startPresence() {
 let walletConnected = false, userPublicKey = '', tokenBalance = 0;
 
 function walletLabel() {
-    const btn = document.getElementById('wallet-btn')!;
+    const btn = document.getElementById('wallet-btn');
+    if (!btn) return;
     if (walletConnected) {
         const short = `${userPublicKey.substring(0, 4)}..${userPublicKey.substring(userPublicKey.length - 4)}`;
         const watch = localStorage.getItem('watchAddress') === userPublicKey ? '[WATCH] ' : '';
@@ -254,7 +298,7 @@ function showWalletModal() {
             userPublicKey = resp.publicKey ? resp.publicKey.toString() : resp.toString();
             walletConnected = true;
             (window as any).activeSolanaProvider = provider;
-            localStorage.setItem('walletType', type);   // games silently reconnect with this
+            localStorage.setItem('walletType', type);
             localStorage.removeItem('watchAddress');
             await syncBalance();
             overlay.remove();
@@ -267,7 +311,7 @@ function showWalletModal() {
             document.getElementById('wm-err')!.textContent = 'INVALID ADDRESS. Check for typos.'; return;
         }
         userPublicKey = addr; walletConnected = true;
-        localStorage.setItem('watchAddress', addr);     // games read this too
+        localStorage.setItem('watchAddress', addr);
         localStorage.removeItem('walletType');
         await syncBalance();
         overlay.remove();
@@ -281,14 +325,70 @@ function showWalletModal() {
     overlay.querySelector('.wm-cancel')?.addEventListener('click', () => overlay.remove());
 }
 
-document.getElementById('wallet-btn')!.addEventListener('click', showWalletModal);
+// ============================================================
+// CONTACT US (logged to Supabase via the submit_feedback RPC)
+// ============================================================
+function showContactModal() {
+    if (document.getElementById('arcade-contact-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'arcade-contact-modal';
+    overlay.innerHTML = `
+      <div class="wm-dialog">
+        <h2>WRITE TO US</h2>
+        <p class="wm-hint">Question, bug report, or a game you want hosted in the arcade &mdash;
+        drop it here and we'll get back to you.</p>
+        <input id="ct-name" class="ct-field" type="text" placeholder="Username / handle" maxlength="40" autocomplete="off" />
+        <input id="ct-email" class="ct-field" type="email" placeholder="Email address" maxlength="254" autocomplete="off" />
+        <textarea id="ct-msg" class="ct-field" placeholder="Your message..." maxlength="2000" rows="5"></textarea>
+        <div id="ct-err"></div>
+        <button class="wm-btn wm-go" id="ct-send">SEND TRANSMISSION</button>
+        <button class="wm-cancel">[ CLOSE ]</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.wm-cancel')?.addEventListener('click', () => overlay.remove());
+
+    // Auto-populate the username from the connected wallet (still editable)
+    if (walletConnected && userPublicKey) {
+        (document.getElementById('ct-name') as HTMLInputElement).value =
+            `WL_${userPublicKey.substring(0, 6)}`;
+    }
+
+    overlay.querySelector('#ct-send')?.addEventListener('click', async () => {
+        const name = (document.getElementById('ct-name') as HTMLInputElement).value.trim();
+        const email = (document.getElementById('ct-email') as HTMLInputElement).value.trim();
+        const msg = (document.getElementById('ct-msg') as HTMLTextAreaElement).value.trim();
+        const err = document.getElementById('ct-err')!;
+        if (name.length < 2) { err.textContent = 'ENTER A USERNAME (2+ CHARACTERS).'; return; }
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { err.textContent = 'ENTER A VALID EMAIL ADDRESS.'; return; }
+        if (msg.length < 5) { err.textContent = 'YOUR MESSAGE IS TOO SHORT.'; return; }
+        err.textContent = '';
+        const btn = document.getElementById('ct-send') as HTMLButtonElement;
+        btn.textContent = 'TRANSMITTING...'; btn.disabled = true;
+        try {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/submit_feedback`, {
+                method: 'POST', headers: sbHeaders,
+                body: JSON.stringify({ p_email: email, p_username: name, p_message: msg })
+            });
+            const ok = await res.json();
+            if (ok === true) {
+                (overlay.querySelector('.wm-dialog') as HTMLElement).innerHTML =
+                    '<h2>\u2705 TRANSMISSION RECEIVED</h2><p class="wm-hint" style="text-align:center;">Thanks! We read everything and reply by email.</p>';
+                setTimeout(() => overlay.remove(), 2500);
+            } else { throw new Error('rejected'); }
+        } catch (e) {
+            err.textContent = 'TRANSMISSION FAILED. PLEASE TRY AGAIN.';
+            btn.textContent = 'SEND TRANSMISSION'; btn.disabled = false;
+        }
+    });
+}
 
 // ============================================================
 // CONTRACT ADDRESS CHIP
 // ============================================================
 function setupCA() {
-    const chip = document.getElementById('ca-chip')!;
-    const text = document.getElementById('ca-text')!;
+    const chip = document.getElementById('ca-chip');
+    const text = document.getElementById('ca-text');
+    if (!chip || !text) return;
     const shortCA = CONTRACT_ADDRESS.length > 20 ? `${CONTRACT_ADDRESS.substring(0, 10)}...${CONTRACT_ADDRESS.substring(CONTRACT_ADDRESS.length - 6)}` : CONTRACT_ADDRESS;
     text.textContent = shortCA;
     chip.addEventListener('click', () => {
@@ -299,12 +399,37 @@ function setupCA() {
 }
 
 // ============================================================
-// BOOT: intro video over the landing, then the arcade
+// BOOT - runs whether or not DOMContentLoaded already fired,
+// and never lets one failing subsystem kill the others.
 // ============================================================
-window.addEventListener('DOMContentLoaded', () => {
-    buildSusan();
-    setupCA();
-    startPresence();
-    restoreWallet().then(walletLabel);
-    playIntroVideo({ src: './intro.mp4', showOncePerPlayer: false });
-});
+function boot() {
+    const safe = (label: string, fn: () => void) => {
+        try { fn(); } catch (e) { console.error(`[ARCADE] ${label} failed:`, e); }
+    };
+    safe('carousel', buildSusan);
+    safe('inputs', wireInputs);
+    safe('ca', setupCA);
+    safe('stats', startPresence);
+    safe('wallet', () => { restoreWallet().then(walletLabel); });
+    safe('buttons', () => {
+        document.getElementById('play-btn')?.addEventListener('click', () => {
+            const g = GAMES[susanIndex];
+            if (g.url) launchGame(g.url);
+        });
+        document.getElementById('wallet-btn')?.addEventListener('click', showWalletModal);
+        document.getElementById('contact-btn')?.addEventListener('click', showContactModal);
+    });
+    safe('intro', () => {
+        if (sessionStorage.getItem('introPlayed')) return; // once per visit, not per navigation
+        sessionStorage.setItem('introPlayed', '1');
+        playIntroVideo({ src: './intro.mp4', showOncePerPlayer: false });
+    });
+    // Belt-and-braces: if the intro overlay somehow sticks, kill it
+    setTimeout(() => document.getElementById('intro-video-overlay')?.remove(), 25000);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+} else {
+    boot(); // DOM was already parsed by the time this module ran
+}

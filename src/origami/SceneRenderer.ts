@@ -535,7 +535,8 @@ export class SceneRenderer {
 
                 ctx.textAlign = "center";
 
-                const currentReviveCost = 100 * (1 << g.revivesUsedThisRun);
+                const reviveCost = Web3Service.REVIVE_COST;
+                const canRevive = Web3Service.canSign() && Web3Service.tokenBalance >= reviveCost && !g.reviveInFlight;
                 let yOffset = g.isLargeScreen ? -(g.height * 0.05) : -(minDim * 0.02);
                 const btnSpacing = g.isLargeScreen ? (g.height * 0.12) : (minDim * 0.10);
 
@@ -546,11 +547,11 @@ export class SceneRenderer {
                 // --- REVIVE BUTTON ---
                 this.reviveButtonRect.set(g.width / 2 - btnWidth / 2, g.height / 2 + yOffset, g.width / 2 + btnWidth / 2, g.height / 2 + yOffset + btnHeight);
 
-                ctx.fillStyle = (g.totalCoins >= currentReviveCost) ? "#4CAF50" : "#555555";
+                ctx.fillStyle = canRevive ? "#4CAF50" : "#555555";
                 ctx.beginPath(); ctx.roundRect(this.reviveButtonRect.left, this.reviveButtonRect.top, btnWidth, btnHeight, 25); ctx.fill();
 
-                const reviveText = "REVIVE ";
-                const costText = `(-${currentReviveCost})`;
+                const reviveText = g.reviveInFlight ? "BURNING... " : "REVIVE ";
+                const costText = `(BURN ${reviveCost.toLocaleString()} $2BA)`;
 
                 ctx.font = `${btnTextSize}px origraph, sans-serif`;
                 const wRevive = ctx.measureText(reviveText).width;
@@ -560,7 +561,7 @@ export class SceneRenderer {
                 let btnStartX = (g.width - (wRevive + wCost)) / 2;
                 ctx.textAlign = "left";
                 
-                ctx.fillStyle = (g.totalCoins >= currentReviveCost) ? "white" : "rgba(255,255,255,0.5)";
+                ctx.fillStyle = canRevive ? "white" : "rgba(255,255,255,0.5)";
                 
                 ctx.font = `${btnTextSize}px origraph, sans-serif`;
                 ctx.fillText(reviveText, btnStartX, this.reviveButtonRect.centerY() + (btnTextSize / 3));
@@ -782,7 +783,9 @@ export class SceneRenderer {
         const titleY = g.height * (g.isLargeScreen ? 0.10 : 0.15);
         const charY = g.height * 0.42;
         const nameY = g.height * (g.isLargeScreen ? 0.68 : 0.68);
-        const actionY = g.height * (g.isLargeScreen ? 0.78 : 0.80);
+        // Action button (LOCKED/SELECT) sits ABOVE the character so the
+        // HOLD-$2BA line and wallet hint below the name render unobstructed.
+        const actionY = g.height * (g.isLargeScreen ? 0.19 : 0.21);
         const backY = g.height * (g.isLargeScreen ? 0.88 : 0.92);
 
         ctx.textAlign = "center";
