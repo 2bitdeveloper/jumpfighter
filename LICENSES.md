@@ -1,14 +1,11 @@
 # 2bitArcade - Third-Party Licenses
 
-## Debris Field
-- Engine: "Canvas Asteroids" by Doug McInnes
-- Source: https://github.com/dmcinnes/HTML5-Asteroids
-- License: MIT (full text at public/debris/LICENSE)
-- Modifications: two sound-effect file paths repointed to locally
-  supplied files (the originals were Freesound clips with unverified
-  licenses and are not distributed here). Game logic unmodified.
-- Bundled with it: jQuery 1.4.1 (MIT), typeface.js render of the
-  Vector Battle font as shipped in the original repository.
+## Radius Raid
+- Author: Jack Rugile
+- Source: https://github.com/jackrugile/radius-raid-js13k
+- License: MIT (full text at public/rraid/LICENSE.md)
+- Modifications: none to game code. Script paths adjusted in the host
+  page; a bridge script adds leaderboard submission alongside the game.
 
 ## Origami Ascent / JumpFighter
 - Original works by 2bit Developer.

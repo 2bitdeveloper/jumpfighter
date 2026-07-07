@@ -14,9 +14,11 @@ const SUPABASE_URL = "https://drawbbapvytjytvbedtl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_zzdZsO1BCunEfdGwur6M4g_nUjW5pa2";
 const INITIAL_TOKEN_SUPPLY = 1_000_000_000;
 
+// featured: true -> shown on the lazy Susan. Everything appears in the catalog grid.
 const GAMES = [
     {
         id: 'origami',
+        featured: true,
         title: 'ORIGAMI ASCENT',
         desc: 'Embark on a breathtaking journey through the endless sky in Origami Ascent, a beautifully crafted 2D papercraft platformer where precision meets serenity.',
         img: './arcade/origami_arcade.png',
@@ -24,24 +26,19 @@ const GAMES = [
     },
     {
         id: 'jumpfighter',
+        featured: true,
         title: 'JUMPFIGHTER',
         desc: 'Pilot your Jump Fighter! Dodge deadly lasers, unlock epic ships, and survive.',
         img: './arcade/jumpfighter_arcade.png',
         url: './jumpfighter.html',
     },
     {
-        id: 'debris',
-        title: 'DEBRIS FIELD',
-        desc: 'Classic vector combat. Blast the drifting debris before it blasts you \u2014 pure arcade reflexes, every run scored on the champion boards.',
-        img: './arcade/debris_arcade.png',
-        url: './debris.html',
-    },
-    {
-        id: 'soon',
-        title: 'MORE GAMES COMING',
-        desc: 'A new cabinet is being wired up. Hold $2BA, climb the boards, and watch this space.',
-        img: null,
-        url: null,
+        id: 'radiusraid',
+        featured: true,
+        title: 'RADIUS RAID',
+        desc: 'A relentless space shoot-\u2019em-up: 13 enemy types, screen-shaking explosions and neon particle chaos. How long can you hold the center?',
+        img: './arcade/radiusraid_arcade.png',
+        url: './rraid.html',
     },
 ];
 
@@ -54,13 +51,14 @@ let susanIndex = 0;
 let susanAngle = 0;
 let autoSpinTimer: ReturnType<typeof setInterval> | null = null;
 let lastSwipeAt = 0; // suppress the click that follows a swipe
-const STEP = 360 / GAMES.length;
+const FEATURED = GAMES.filter(g => (g as any).featured);
+const STEP = 360 / FEATURED.length;
 
 function buildSusan() {
     const ring = document.getElementById('susan-ring');
     if (!ring) return;
     ring.innerHTML = '';
-    GAMES.forEach((g, i) => {
+    FEATURED.forEach((g, i) => {
         const panel = document.createElement('div');
         panel.className = 'susan-panel';
         panel.dataset.index = i.toString();
@@ -80,7 +78,7 @@ function buildSusan() {
         panel.addEventListener('click', () => {
             if (Date.now() - lastSwipeAt < 350) return; // that "click" was the end of a swipe
             const target = parseInt(panel.dataset.index!);
-            if (target === susanIndex && GAMES[target].url) { launchGame(GAMES[target].url!); return; }
+            if (target === susanIndex && FEATURED[target].url) { launchGame(FEATURED[target].url!); return; }
             rotateTo(target);
         });
         ring.appendChild(panel);
@@ -91,14 +89,14 @@ function buildSusan() {
 }
 
 function rotateBy(dir: number) {
-    susanIndex = (susanIndex + dir + GAMES.length) % GAMES.length;
+    susanIndex = (susanIndex + dir + FEATURED.length) % FEATURED.length;
     susanAngle -= dir * STEP;
     applyRotation(); updateInfo(); startAutoSpin();
 }
 
 function rotateTo(target: number) {
-    const diff = (target - susanIndex + GAMES.length) % GAMES.length;
-    rotateBy(diff === 2 ? -1 : diff);
+    const diff = (target - susanIndex + FEATURED.length) % FEATURED.length;
+    rotateBy(diff > FEATURED.length / 2 ? diff - FEATURED.length : diff);
 }
 
 function applyRotation() {
@@ -111,7 +109,7 @@ function applyRotation() {
 }
 
 function updateInfo() {
-    const g = GAMES[susanIndex];
+    const g = FEATURED[susanIndex];
     const title = document.getElementById('game-title');
     const desc = document.getElementById('game-desc');
     const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
@@ -130,6 +128,24 @@ function startAutoSpin() {
 
 function launchGame(url: string) { window.location.href = url; }
 
+// ---------- FULL CATALOG GRID ----------
+function buildCatalog() {
+    const grid = document.getElementById('catalog-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    GAMES.forEach((g) => {
+        const tile = document.createElement('div');
+        tile.className = 'cat-tile';
+        tile.innerHTML = `<h3>${g.title}</h3><p>${g.desc}</p><span class="cat-play">\u25B6 PLAY</span>`;
+        tile.addEventListener('click', () => { if (g.url) launchGame(g.url!); });
+        grid.appendChild(tile);
+    });
+    const soon = document.createElement('div');
+    soon.className = 'cat-tile cat-soon';
+    soon.innerHTML = `<h3>MORE GAMES COMING</h3><p>A new cabinet is being wired up. Building something? Hit CONTACT US and pitch it.</p><span class="cat-play">\u2026</span>`;
+    grid.appendChild(soon);
+}
+
 // ---------- ARROWS + KEYBOARD + SWIPE ----------
 function wireInputs() {
     // The carousel arrow buttons (this wiring was missing - keyboard worked, clicks didn't)
@@ -143,7 +159,7 @@ function wireInputs() {
         if (e.key === 'ArrowLeft') { e.preventDefault(); rotateBy(-1); }
         else if (e.key === 'ArrowRight') { e.preventDefault(); rotateBy(1); }
         else if (e.key === 'Enter') {
-            const g = GAMES[susanIndex];
+            const g = FEATURED[susanIndex];
             if (g.url) launchGame(g.url);
         }
     });
@@ -418,13 +434,14 @@ function boot() {
         try { fn(); } catch (e) { console.error(`[ARCADE] ${label} failed:`, e); }
     };
     safe('carousel', buildSusan);
+    safe('catalog', buildCatalog);
     safe('inputs', wireInputs);
     safe('ca', setupCA);
     safe('stats', startPresence);
     safe('wallet', () => { restoreWallet().then(walletLabel); });
     safe('buttons', () => {
         document.getElementById('play-btn')?.addEventListener('click', () => {
-            const g = GAMES[susanIndex];
+            const g = FEATURED[susanIndex];
             if (g.url) launchGame(g.url);
         });
         document.getElementById('wallet-btn')?.addEventListener('click', showWalletModal);

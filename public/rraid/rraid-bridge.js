@@ -1,20 +1,18 @@
 // ============================================================
-// DEBRIS FIELD <-> 2BITARCADE BRIDGE
-// Plain script (no modules): hooks the untouched Asteroids engine
-// through its globals (Game.score, Game.FSM). Zero gameplay edits.
-//   - one telemetry timestamp per 500 points (milestone pattern)
-//   - submits to the validate-score edge function on game over
-//   - presence heartbeat feeds the arcade's Active Players counter
-//   - player identity shared with the rest of the arcade
+// RADIUS RAID <-> 2BITARCADE BRIDGE
+// Hooks the untouched engine via its global `$` object:
+//   $.reset() fires on every new run  -> reset telemetry
+//   $.setState('gameover')            -> submit the run
+//   $.score polled at 10 Hz           -> one timestamp per 1,000 pts
+// Zero edits to Jack Rugile's code.
 // ============================================================
 (function () {
   'use strict';
 
-  // --- SHARED ARCADE CONFIG (keep in sync with the other games) ---
   var SUPABASE_URL = 'https://drawbbapvytjytvbedtl.supabase.co';
   var SUPABASE_KEY = 'sb_publishable_zzdZsO1BCunEfdGwur6M4g_nUjW5pa2';
-  var BOARD_ID = 'debris_field';
-  var MILESTONE_POINTS = 500; // one telemetry entry per 500 points
+  var BOARD_ID = 'radius_raid';
+  var MILESTONE_POINTS = 1000;
 
   var sbHeaders = {
     'apikey': SUPABASE_KEY,
@@ -22,7 +20,6 @@
     'Content-Type': 'application/json'
   };
 
-  // --- PLAYER IDENTITY (same rules as every other cabinet) ---
   var guestName = 'Guest_' + (Math.floor(Math.random() * 9000) + 1000);
   var walletAddress = '';
 
@@ -45,12 +42,11 @@
           var pk = (resp && resp.publicKey && resp.publicKey.toString()) ||
                    (provider.publicKey && provider.publicKey.toString()) || '';
           if (pk) walletAddress = pk;
-        }).catch(function () { /* not pre-authorized: guest identity */ });
+        }).catch(function () {});
       }
-    } catch (e) { /* identity stays guest */ }
+    } catch (e) {}
   }
 
-  // --- PRESENCE HEARTBEAT ---
   var sessionId = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : Date.now() + '-' + Math.random().toString(36).slice(2);
@@ -63,26 +59,17 @@
     }).catch(function () {});
   }
 
-  // --- TELEMETRY ---
-  var telemetry = [];
-  var runStart = 0;
-  var lastMilestone = 0;
-  var submitted = false;
+  var telemetry = [], runStart = 0, lastMilestone = 0, submitted = false;
 
   function resetRun() {
-    telemetry = [];
-    runStart = Date.now();
-    lastMilestone = 0;
-    submitted = false;
+    telemetry = []; runStart = Date.now(); lastMilestone = 0; submitted = false;
   }
 
   function pollScore() {
-    if (!window.Game || runStart === 0) return;
-    var score = window.Game.score || 0;
+    if (runStart === 0 || typeof window.$ === 'undefined') return;
+    var score = window.$.score || 0;
     while (score >= lastMilestone + MILESTONE_POINTS) {
       lastMilestone += MILESTONE_POINTS;
-      // Space multiple same-tick milestones by 1ms so timestamps stay
-      // strictly increasing (the server rejects non-monotonic telemetry).
       var t = Date.now() - runStart;
       var prev = telemetry.length ? telemetry[telemetry.length - 1] : -1;
       telemetry.push(t <= prev ? prev + 1 : t);
@@ -98,28 +85,27 @@
     }).catch(function () {});
   }
 
-  // --- HOOK THE GAME'S STATE MACHINE (no game.js edits needed) ---
-  function hookFSM() {
-    if (!window.Game || !window.Game.FSM) { setTimeout(hookFSM, 100); return; }
-    var fsm = window.Game.FSM;
+  function hook() {
+    var g = window.$;
+    if (!g || typeof g.setState !== 'function' || typeof g.reset !== 'function') {
+      setTimeout(hook, 100); return;
+    }
+    var origReset = g.reset;
+    g.reset = function () { resetRun(); return origReset.apply(this, arguments); };
 
-    var origStart = fsm.start;
-    fsm.start = function () { resetRun(); return origStart.apply(this, arguments); };
+    var origSetState = g.setState;
+    g.setState = function (state) {
+      // final score is captured before submission by one last poll
+      if (state === 'gameover') { pollScore(); submitRun(); }
+      return origSetState.apply(this, arguments);
+    };
 
-    var origEnd = fsm.end_game;
-    fsm.end_game = function () { submitRun(); return origEnd.apply(this, arguments); };
-
-    setInterval(pollScore, 100); // 10 Hz milestone polling
-    console.log('[DEBRIS] 2bitArcade bridge armed. Board: ' + BOARD_ID);
+    setInterval(pollScore, 100);
+    console.log('[RADIUS RAID] 2bitArcade bridge armed. Board: ' + BOARD_ID);
   }
 
-  // --- BOOT ---
   restoreWalletIdentity();
   heartbeat();
   setInterval(heartbeat, 45000);
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', hookFSM);
-  } else {
-    hookFSM();
-  }
+  hook();
 })();
