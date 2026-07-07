@@ -1,0 +1,4 @@
+Neon Runner
+(c) 2026 2bit Developer. Original work created for 2bitArcade.
+All code and art are original (canvas-drawn); no third-party game
+assets are used. The VT323 font is loaded from Google Fonts (OFL).

@@ -14,33 +14,66 @@ const SUPABASE_URL = "https://drawbbapvytjytvbedtl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_zzdZsO1BCunEfdGwur6M4g_nUjW5pa2";
 const INITIAL_TOKEN_SUPPLY = 1_000_000_000;
 
-// featured: true -> shown on the lazy Susan. Everything appears in the catalog grid.
-const GAMES = [
+// defaultFeatured: seeds the lazy Susan until enough ratings exist to rank it.
+// category: drives the catalog filter chips.
+interface Game { id: string; title: string; desc: string; img: string; url: string; category: string; defaultFeatured?: boolean; unranked?: boolean; }
+const GAMES: Game[] = [
     {
-        id: 'origami',
-        featured: true,
+        id: 'origami', defaultFeatured: true, category: 'Platformer',
         title: 'ORIGAMI ASCENT',
         desc: 'Embark on a breathtaking journey through the endless sky in Origami Ascent, a beautifully crafted 2D papercraft platformer where precision meets serenity.',
         img: './arcade/origami_arcade.png',
         url: './origami.html',
     },
     {
-        id: 'jumpfighter',
-        featured: true,
+        id: 'jumpfighter', defaultFeatured: true, category: 'Arcade',
         title: 'JUMPFIGHTER',
         desc: 'Pilot your Jump Fighter! Dodge deadly lasers, unlock epic ships, and survive.',
         img: './arcade/jumpfighter_arcade.png',
         url: './jumpfighter.html',
     },
     {
-        id: 'radiusraid',
-        featured: true,
+        id: 'radiusraid', defaultFeatured: true, category: 'Shooter',
         title: 'RADIUS RAID',
         desc: 'A relentless space shoot-\u2019em-up: 13 enemy types, screen-shaking explosions and neon particle chaos. How long can you hold the center?',
         img: './arcade/radiusraid_arcade.png',
         url: './rraid.html',
     },
+    {
+        id: 'bullethell', category: 'Shooter',
+        title: 'BULLET HELL',
+        desc: 'Weave through storms of enemy fire in this frantic danmaku shooter. Bank your bombs, clear the screen, and push your score before the patterns swallow you.',
+        img: './arcade/bullethell_arcade.png',
+        url: './bullethell.html',
+    },
+    {
+        id: 'spacepi', category: 'Shooter',
+        title: 'SPACEPI',
+        desc: 'Defend your home world across 13 escalating levels of orbital combat. Precise mouse-aim gunnery, chained accuracy bonuses, and a rising cumulative score on the champion boards.',
+        img: './arcade/spacepi_arcade.png',
+        url: './spacepi.html',
+    },
+    {
+        id: 'luckyalien', category: 'Platformer',
+        title: 'LUCKY ALIEN',
+        desc: 'A retro jungle platformer in the classic console tradition. Dash and jump through Grassland and Forest, grab powerups, collect coins, and take down the boss. The more coins you bank in a run, the higher you climb the boards.',
+        img: './arcade/luckyalien_arcade.png',
+        url: './luckyalien.html',
+    },
+    {
+        id: 'neonrunner', category: 'Runner',
+        title: 'NEON RUNNER',
+        desc: 'An original 2bitArcade cabinet. A pixel robot dashes through an endless neon cyber city \u2014 leap the barriers, duck the drones, and outrun a speed that never stops climbing. Distance is everything.',
+        img: './arcade/neonrunner_arcade.png',
+        url: './neonrunner.html',
+    },
 ];
+
+// --- ratings state ---
+let ratings: Record<string, { avg: number; count: number; mine: number }> = {};
+const PER_PAGE = 8;
+let catalogPage = 0;
+let activeCategory = 'All';
 
 const sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
 
@@ -51,8 +84,23 @@ let susanIndex = 0;
 let susanAngle = 0;
 let autoSpinTimer: ReturnType<typeof setInterval> | null = null;
 let lastSwipeAt = 0; // suppress the click that follows a swipe
-const FEATURED = GAMES.filter(g => (g as any).featured);
-const STEP = 360 / FEATURED.length;
+let FEATURED: Game[] = GAMES.filter(g => g.defaultFeatured); // reseeded once ratings load
+let STEP = 360 / Math.max(1, FEATURED.length);
+
+// Top 3 by average rating; ties and unrated games fall back to default-featured order.
+function computeFeatured() {
+    const rated = [...GAMES].filter(g => ratings[g.id]?.count > 0);
+    if (rated.length === 0) { FEATURED = GAMES.filter(g => g.defaultFeatured); }
+    else {
+        rated.sort((a, b) => (ratings[b.id].avg - ratings[a.id].avg) || (ratings[b.id].count - ratings[a.id].count));
+        const top = rated.slice(0, 3);
+        // pad to 3 with default-featured games not already included
+        for (const g of GAMES) { if (top.length >= 3) break; if (!top.includes(g) && g.defaultFeatured) top.push(g); }
+        FEATURED = top;
+    }
+    STEP = 360 / Math.max(1, FEATURED.length);
+    susanIndex = Math.min(susanIndex, FEATURED.length - 1);
+}
 
 function buildSusan() {
     const ring = document.getElementById('susan-ring');
@@ -128,22 +176,120 @@ function startAutoSpin() {
 
 function launchGame(url: string) { window.location.href = url; }
 
-// ---------- FULL CATALOG GRID ----------
+// ---------- RATINGS ----------
+async function fetchRatings() {
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_ratings`, {
+            method: 'POST', headers: sbHeaders,
+            body: JSON.stringify({ p_wallet: userPublicKey || '' })
+        });
+        const rows = await res.json();
+        ratings = {};
+        if (Array.isArray(rows)) {
+            for (const r of rows) ratings[r.game_id] = { avg: Number(r.avg_stars) || 0, count: Number(r.vote_count) || 0, mine: r.my_stars || 0 };
+        }
+    } catch (e) { /* ratings RPC not deployed yet - stars show as unrated */ }
+    computeFeatured();
+    buildSusan();
+    buildCatalog();
+}
+
+async function submitRating(gameId: string, stars: number) {
+    if (!walletConnected || !userPublicKey) { alert('Connect your wallet to rate games.'); return; }
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/rate_game`, {
+            method: 'POST', headers: sbHeaders,
+            body: JSON.stringify({ p_game: gameId, p_wallet: userPublicKey, p_stars: stars })
+        });
+        if (await res.json() === true) await fetchRatings();
+    } catch (e) {}
+}
+
+function starRow(gameId: string): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'cat-stars' + (walletConnected ? '' : ' readonly');
+    const r = ratings[gameId];
+    const filled = r ? Math.round(r.avg) : 0;
+    const mine = r?.mine || 0;
+    for (let i = 1; i <= 5; i++) {
+        const star = document.createElement('span');
+        star.className = 'star' + (i <= (mine || filled) ? ' filled' : '');
+        star.textContent = '\u2605';
+        if (walletConnected) {
+            star.title = `Rate ${i}/5`;
+            star.addEventListener('click', (e) => { e.stopPropagation(); submitRating(gameId, i); });
+        }
+        wrap.appendChild(star);
+    }
+    return wrap;
+}
+
+// ---------- FULL CATALOG GRID (paginated, filterable) ----------
+function categories(): string[] {
+    return ['All', ...Array.from(new Set(GAMES.map(g => g.category)))];
+}
+
+function buildCategoryBar() {
+    const bar = document.getElementById('catalog-categories');
+    if (!bar) return;
+    bar.innerHTML = '';
+    categories().forEach(cat => {
+        const chip = document.createElement('div');
+        chip.className = 'cat-chip' + (cat === activeCategory ? ' active' : '');
+        chip.textContent = cat.toUpperCase();
+        chip.addEventListener('click', () => { activeCategory = cat; catalogPage = 0; buildCatalog(); });
+        bar.appendChild(chip);
+    });
+}
+
 function buildCatalog() {
+    buildCategoryBar();
     const grid = document.getElementById('catalog-grid');
     if (!grid) return;
     grid.innerHTML = '';
-    GAMES.forEach((g) => {
+
+    const filtered = GAMES.filter(g => activeCategory === 'All' || g.category === activeCategory);
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+    catalogPage = Math.min(catalogPage, totalPages - 1);
+    const pageGames = filtered.slice(catalogPage * PER_PAGE, catalogPage * PER_PAGE + PER_PAGE);
+
+    pageGames.forEach((g) => {
         const tile = document.createElement('div');
         tile.className = 'cat-tile';
-        tile.innerHTML = `<h3>${g.title}</h3><p>${g.desc}</p><span class="cat-play">\u25B6 PLAY</span>`;
-        tile.addEventListener('click', () => { if (g.url) launchGame(g.url!); });
+        const img = document.createElement('img');
+        img.src = g.img; img.alt = g.title;
+        img.onerror = () => { img.style.display = 'none'; };
+        tile.appendChild(img);
+        const h3 = document.createElement('h3'); h3.textContent = g.title; tile.appendChild(h3);
+        tile.appendChild(starRow(g.id));
+        const r = ratings[g.id];
+        const meta = document.createElement('div');
+        meta.className = 'cat-rating-meta';
+        if (g.unranked) meta.innerHTML = '<span class="cat-unranked">UNRANKED</span>';
+        else meta.textContent = r && r.count > 0 ? `${r.avg.toFixed(1)} \u2605 (${r.count})` : 'Not yet rated';
+        tile.appendChild(meta);
+        const p = document.createElement('p'); p.textContent = g.desc; tile.appendChild(p);
+        const play = document.createElement('span'); play.className = 'cat-play'; play.textContent = '\u25B6 PLAY'; tile.appendChild(play);
+        tile.addEventListener('click', () => { if (g.url) launchGame(g.url); });
         grid.appendChild(tile);
     });
-    const soon = document.createElement('div');
-    soon.className = 'cat-tile cat-soon';
-    soon.innerHTML = `<h3>MORE GAMES COMING</h3><p>A new cabinet is being wired up. Building something? Hit CONTACT US and pitch it.</p><span class="cat-play">\u2026</span>`;
-    grid.appendChild(soon);
+
+    // "coming soon" tile only on the last page of the All view
+    if (activeCategory === 'All' && catalogPage === totalPages - 1 && pageGames.length < PER_PAGE) {
+        const soon = document.createElement('div');
+        soon.className = 'cat-tile cat-soon';
+        soon.innerHTML = `<h3>MORE GAMES COMING</h3><p>Building something? Hit CONTACT US and pitch your game.</p><span class="cat-play">\u2026</span>`;
+        grid.appendChild(soon);
+    }
+
+    const label = document.getElementById('cat-page-label');
+    if (label) label.textContent = `PAGE ${catalogPage + 1} / ${totalPages}`;
+    const prev = document.getElementById('cat-prev') as HTMLButtonElement | null;
+    const next = document.getElementById('cat-next') as HTMLButtonElement | null;
+    const pager = document.getElementById('catalog-pager');
+    if (pager) pager.style.display = totalPages > 1 ? 'flex' : 'none';
+    if (prev) prev.disabled = catalogPage === 0;
+    if (next) next.disabled = catalogPage >= totalPages - 1;
 }
 
 // ---------- ARROWS + KEYBOARD + SWIPE ----------
@@ -364,6 +510,11 @@ function showContactModal() {
         <h2>WRITE TO US</h2>
         <p class="wm-hint">Question, bug report, or a game you want hosted in the arcade &mdash;
         drop it here and we'll get back to you.</p>
+        <select id="ct-category" class="ct-select">
+          <option value="feedback">Feedback</option>
+          <option value="complaint">Complaint</option>
+          <option value="pitch">Pitch your game</option>
+        </select>
         <input id="ct-name" class="ct-field" type="text" placeholder="Username / handle" maxlength="40" autocomplete="off" />
         <input id="ct-email" class="ct-field" type="email" placeholder="Email address" maxlength="254" autocomplete="off" />
         <textarea id="ct-msg" class="ct-field" placeholder="Your message..." maxlength="2000" rows="5"></textarea>
@@ -394,7 +545,7 @@ function showContactModal() {
         try {
             const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/submit_feedback`, {
                 method: 'POST', headers: sbHeaders,
-                body: JSON.stringify({ p_email: email, p_username: name, p_message: msg })
+                body: JSON.stringify({ p_email: email, p_username: name, p_message: msg, p_category: (document.getElementById('ct-category') as HTMLSelectElement).value })
             });
             const ok = await res.json();
             if (ok === true) {
@@ -435,6 +586,11 @@ function boot() {
     };
     safe('carousel', buildSusan);
     safe('catalog', buildCatalog);
+    safe('pager', () => {
+        document.getElementById('cat-prev')?.addEventListener('click', () => { if (catalogPage > 0) { catalogPage--; buildCatalog(); } });
+        document.getElementById('cat-next')?.addEventListener('click', () => { catalogPage++; buildCatalog(); });
+    });
+    safe('ratings', fetchRatings);
     safe('inputs', wireInputs);
     safe('ca', setupCA);
     safe('stats', startPresence);
