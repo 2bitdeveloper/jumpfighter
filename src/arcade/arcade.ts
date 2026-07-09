@@ -9,12 +9,18 @@ import { playIntroVideo } from '../IntroVideo';
 // --- SHARED ARCADE CONFIG (keep in sync with the games) ---
 // All token/backend config comes from the single source of truth
 // (arcade-config.js -> window.ARCADE_CONFIG). Edit that ONE file at launch.
-const CONTRACT_ADDRESS = window.ARCADE_CONFIG.CONTRACT_ADDRESS;
-const TARGET_TOKEN_MINT = window.ARCADE_CONFIG.TOKEN_MINT;
-const SOLANA_RPC_URL = window.ARCADE_CONFIG.SOLANA_RPC_URL;
-const SUPABASE_URL = window.ARCADE_CONFIG.SUPABASE_URL;
-const SUPABASE_KEY = window.ARCADE_CONFIG.SUPABASE_KEY;
-const INITIAL_TOKEN_SUPPLY = window.ARCADE_CONFIG.INITIAL_TOKEN_SUPPLY;
+// HARDENED: if arcade-config.js ever fails to load, fall back to defaults and
+// log loudly instead of letting a TypeError kill the entire page.
+const _CFG = (window as any).ARCADE_CONFIG || (console.error(
+    '[2BITARCADE] arcade-config.js DID NOT LOAD - using fallback defaults. ' +
+    'Check that public/arcade-config.js exists and is deployed.'
+), {});
+const CONTRACT_ADDRESS = _CFG.CONTRACT_ADDRESS || 'YOUR_CA_HERE';
+const TARGET_TOKEN_MINT = _CFG.TOKEN_MINT || '';
+const SOLANA_RPC_URL = _CFG.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+const SUPABASE_URL = _CFG.SUPABASE_URL || '';
+const SUPABASE_KEY = _CFG.SUPABASE_KEY || '';
+const INITIAL_TOKEN_SUPPLY = _CFG.INITIAL_TOKEN_SUPPLY || 1000000000;
 
 // defaultFeatured: seeds the lazy Susan until enough ratings exist to rank it.
 // category: drives the catalog filter chips.
@@ -506,7 +512,7 @@ function startPresence() {
 // ============================================================
 let walletConnected = false, userPublicKey = '', tokenBalance = 0;
 let arcadeUsername = localStorage.getItem('arcadeUsername') || '';
-const MIN_TOKENS_TO_PLAY = window.ARCADE_CONFIG.MIN_TOKENS_TO_PLAY; // required $2BA after free trial
+const MIN_TOKENS_TO_PLAY = _CFG.MIN_TOKENS_TO_PLAY || 1000; // required $2BA after free trial
 
 function walletLabel() {
     const btn = document.getElementById('wallet-btn');
