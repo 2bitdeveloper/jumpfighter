@@ -50,7 +50,7 @@
   };
 
   // ---------- state ----------
-  var STATE = { MENU: 0, PLAY: 1, OVER: 2, STAGEDONE: 3, WIN: 4 };
+  var STATE = { MENU: 0, PLAY: 1, OVER: 2, STAGEDONE: 3, WIN: 4, COUNTDOWN: 5 };
   var state = STATE.MENU;
   var segments = [];
   var trackLength = 0;
@@ -59,18 +59,20 @@
   var speed = 0;
   var distance = 0;
   var best = 0;
-  var frame = 0, overAt = 0, stageDoneAt = 0;
+  var frame = 0, overAt = 0, stageDoneAt = 0, countdownStart = 0;
   var opponents = [];
 
   // ---------- STAGES (finite races of varying length) ----------
   // Lengths tuned so a full field finishing takes ~35-70s; short enough that
   // positions stay competitive, long enough that skill matters.
+  // Lengths tuned for ~2-3 minute races. At ~75% average speed (~9000 u/s),
+  // 1.1M-1.6M units => roughly 120-180 seconds per stage, varying by stage.
   var STAGE_DEFS = [
-    { name: 'STAGE 1', laps: 1, len: 42000 },
-    { name: 'STAGE 2', laps: 1, len: 58000 },
-    { name: 'STAGE 3', laps: 1, len: 50000 },
-    { name: 'STAGE 4', laps: 1, len: 68000 },
-    { name: 'STAGE 5', laps: 1, len: 60000 }
+    { name: 'STAGE 1', laps: 1, len: 1100000 },   // ~2:00
+    { name: 'STAGE 2', laps: 1, len: 1350000 },   // ~2:30
+    { name: 'STAGE 3', laps: 1, len: 1200000 },   // ~2:15
+    { name: 'STAGE 4', laps: 1, len: 1600000 },   // ~3:00
+    { name: 'STAGE 5', laps: 1, len: 1450000 }    // ~2:40
   ];
   var stageNum = 0;              // 0-indexed
   var finishZ = 0;               // world-z of the finish line for this stage
@@ -162,7 +164,7 @@
       var laneX = lanes[i % 3];
       // Each CPU has a skill rating that makes the field competitive but beatable.
       // Ratings cluster near the player's top speed so races stay close.
-      var skill = 0.90 + Math.random() * 0.14;          // 0.90..1.04 of MAX
+      var skill = 0.82 + Math.random() * 0.24;          // 0.82..1.06 - real spread
       // If seeded from last results, better finishers get slightly higher skill.
       if (order) {
         var seedRank = order[i] != null ? order[i] : i;
@@ -236,7 +238,8 @@
     var def = STAGE_DEFS[stageNum];
     buildTrack(def.len);
     spawnOpponents();
-    state = STATE.PLAY;
+    state = STATE.COUNTDOWN;
+    countdownStart = Date.now();
     position = 0; playerX = 0; speed = 0; distance = 0; frame = 0;
     playerFinished = false; playerFinishPos = 0;
   }
@@ -290,6 +293,18 @@
       if (Date.now() - stageDoneAt > 2600) advanceStage();
       return;
     }
+    if (state === STATE.COUNTDOWN) {
+      // 3.4s countdown: "3","2","1","GO!" then race
+      var elapsed = Date.now() - countdownStart;
+      // play a beep at each second tick
+      var tick = Math.floor(elapsed / 1000);
+      if (tick !== update._lastTick && tick <= 3) {
+        update._lastTick = tick;
+        if (window.SunsetDriftSound) window.SunsetDriftSound.beep && window.SunsetDriftSound.beep(tick >= 3);
+      }
+      if (elapsed >= 3400) { state = STATE.PLAY; update._lastTick = -1; }
+      return;
+    }
     if (state !== STATE.PLAY) return;
 
     var playerSeg = findSegment(position + PLAYER_Z);
@@ -329,6 +344,14 @@
 
     var playerZabs = position + PLAYER_Z;
 
+    // pick this frame's single hunter: the closest unfinished rival
+    update._hunterIdx = 0;
+    var bestGap = 1e12;
+    for (var hi = 0; hi < opponents.length; hi++) {
+      if (opponents[hi].finished) continue;
+      var hg = Math.abs(opponents[hi].z - playerZabs);
+      if (hg < bestGap) { bestGap = hg; update._hunterIdx = hi; }
+    }
     // ----- CPU rivals: competitive, rubber-banded, NON-wrapping -----
     for (var i = 0; i < opponents.length; i++) {
       var o = opponents[i];
@@ -344,10 +367,8 @@
       // if a CPU is far BEHIND the player, speed it up; if far AHEAD, ease it.
       var gap = o.z - playerZabs;                  // + = ahead of player, - = behind
       var band = 1;
-      if (gap < -3000) band = 1.12;                // trailing: catch up
-      else if (gap < -800) band = 1.05;
-      else if (gap > 4000) band = 0.90;            // leading: back off so player can chase
-      else if (gap > 1500) band = 0.96;
+      if (gap < -9000) band = 1.06;                // far behind: mild catch-up only
+      else if (gap > 12000) band = 0.95;           // far ahead: mild ease only
 
       // ease on sharp curves like a real driver
       var oSeg = findSegment(Math.min(o.z, trackLength - 1));
@@ -355,12 +376,24 @@
       o.speed = o.baseSpeed * band * curveEase;
 
       // --- racing line + aggression: pick a lane; if near the player, hunt them ---
+      if (o.shoveCool > 0) o.shoveCool -= dt;
+      // only the SINGLE closest rival may hunt the player, and not while cooling down
+      var isHunter = (i === (update._hunterIdx || 0));
       var nearPlayer = Math.abs(gap) < 1800;
-      if (nearPlayer && Math.random() < o.aggro * 0.05) {
-        // steer toward the player's lane to bully them toward the edge
+      if (isHunter && nearPlayer && o.shoveCool <= 0 && Math.random() < o.aggro * 0.03) {
         o.targetX = playerX + (playerX > 0 ? 0.15 : -0.15);
       } else if (Math.random() < 0.012) {
         o.targetX = (Math.random() * 1.4 - 0.7);
+      }
+      // separation: don't stack on a nearby rival's lane (breaks up the wall)
+      for (var j2 = 0; j2 < opponents.length; j2++) {
+        if (j2 === i) continue;
+        var o2 = opponents[j2];
+        if (Math.abs(o2.z - o.z) < SEG_LEN * 2 && Math.abs(o2.x - o.x) < 0.25) {
+          o.targetX += (o.x >= o2.x ? 0.25 : -0.25);
+          o.targetX = Math.max(-0.85, Math.min(0.85, o.targetX));
+          break;
+        }
       }
       o.x += (o.targetX - o.x) * Math.min(1, dt * 1.6);
       o.x = Math.max(-0.95, Math.min(0.95, o.x));
@@ -378,8 +411,10 @@
       var rel = o.z - playerZabs;
       if (o.wrecked <= 0 && !playerFinished && Math.abs(rel) < SEG_LEN * 1.1 && Math.abs(o.x - playerX) < 0.30) {
         // side-by-side contact: the CPU shoves the player outward
+        if (o.shoveCool > 0) { o.wrecked = 0.2; continue; }  // cooling: no shove
+        o.shoveCool = 2.5;
         var dir = playerX >= o.x ? 1 : -1;
-        playerX += dir * 0.22;                       // player knocked toward the edge
+        playerX += dir * 0.18;                       // player knocked toward the edge
         o.x -= dir * 0.06;                           // CPU barely budges (aggressive)
         speed *= 0.82;                               // player loses some momentum
         o.wrecked = 0.35;
@@ -442,6 +477,7 @@
     if (state === STATE.OVER) drawOver();
     if (state === STATE.STAGEDONE) drawStageDone();
     if (state === STATE.WIN) drawWin();
+    if (state === STATE.COUNTDOWN) drawCountdown();
   }
 
   function drawBackground() {
@@ -771,7 +807,10 @@
     var lean = 0;
     if (keys['ArrowLeft'] || keys['KeyA'] || touchSteer < 0) lean = -1;
     if (keys['ArrowRight'] || keys['KeyD'] || touchSteer > 0) lean = 1;
-    drawCar(W / 2 + lean * 6, H - 90 + bounce, 2.6, '#e01e37', true);
+    // size the player with the SAME formula opponents use at the player depth,
+    // so no opponent can ever render larger at equal distance (scales with screen)
+    var pScale = ((FIELD / PLAYER_Z) * ROAD_W * (W / 2) * 0.30) / 46;
+    drawCar(W / 2 + lean * 6, H - 90 + bounce, pScale, '#e01e37', true);
   }
 
   function racePosition() {
@@ -830,6 +869,30 @@
   }
 
   function ordinal(n) { var s = ['th','st','nd','rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+  function drawCountdown() {
+    var elapsed = Date.now() - countdownStart;
+    var num = 3 - Math.floor(elapsed / 1000);
+    var label = num > 0 ? String(num) : 'GO!';
+    var inSec = (elapsed % 1000) / 1000;
+    var scale = 1 + (1 - inSec) * 0.6;
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.translate(W / 2, H * 0.42);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = Math.min(1, 1.4 - inSec);
+    var col = (label === 'GO!') ? '#7cff5a' : '#ffde59';
+    ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 30;
+    ctx.font = "bold 120px 'VT323', monospace";
+    ctx.fillText(label, 0, 0);
+    ctx.restore();
+    ctx.textBaseline = 'alphabetic';
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#fff'; ctx.font = "26px monospace";
+    ctx.fillText(STAGE_DEFS[stageNum].name + '  \u2014  GET READY', W / 2, H * 0.62);
+    ctx.restore();
+  }
 
   function drawStageDone() {
     dim(); ctx.textAlign = 'center';

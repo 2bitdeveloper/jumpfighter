@@ -14,9 +14,27 @@ window.ARCADE_CONFIG = {
   TOKEN_MINT:       "YOUR_TOKEN_MINT_ADDRESS_HERE", // the SPL mint (for balances + burns) — usually SAME as CA on pump.fun
 
   // ---- USUALLY STABLE ----
-  SOLANA_RPC_URL:   "https://api.mainnet-beta.solana.com", // swap to your Helius URL before launch
+  SOLANA_RPC_URL:   "https://mainnet.helius-rpc.com/?api-key=3480e0ac-2fe9-415c-962c-6ec8c8337290", // swap to your Helius URL before launch
   SUPABASE_URL:     "https://drawbbapvytjytvbedtl.supabase.co",
   SUPABASE_KEY:     "sb_publishable_zzdZsO1BCunEfdGwur6M4g_nUjW5pa2",
+
+  // ---- DEV / TESTING ----
+  // Wallets listed here get UNRESTRICTED access (no username, no trial, no
+  // token requirement) - but ONLY when connected via a wallet extension
+  // (Phantom/Solflare/Backpack). Watch-mode entry of these addresses does NOT
+  // bypass, so strangers reading this file can't ride your dev wallet.
+  // !!! EMPTY THIS LIST BEFORE LAUNCH !!!
+  DEV_WALLETS: ["5LDK5NfqLE14Wtq62CKX7JXyxS6rxWNUURa9pw3AG4MY"],
+  // For extension-less devices (e.g. a locked-down work laptop): enter your
+  // dev wallet as a WATCH address, then once in the browser console run
+  //   localStorage.setItem('devKey', '<your secret key>')
+  // Only the SHA-256 HASH of the key lives here (safe to publish - the key
+  // itself cannot be recovered from it). To use your own key, run this in any
+  // browser console and paste the output:
+  //   crypto.subtle.digest('SHA-256', new TextEncoder().encode('YOUR-KEY'))
+  //     .then(b=>console.log([...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')))
+  // !!! BLANK THIS AND DEV_WALLETS BEFORE LAUNCH !!!
+  DEV_KEY_HASH: "aac4acefe61647a45fa37fdf2cdf05a88f84511408e0e4f0b70259a04751c2d3",
 
   // ---- ECONOMY CONSTANTS ----
   INITIAL_TOKEN_SUPPLY: 1000000000,  // 1,000,000,000 $2BA (for the "burned" counter)

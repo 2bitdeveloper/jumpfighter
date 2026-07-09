@@ -208,6 +208,22 @@ function launchGame(url: string) { window.location.href = url; }
 // ---------- ACCESS GATE (wallet + username required; 8h free trial; then >=1000 $2BA) ----------
 async function checkAccess(): Promise<{ allowed: boolean; reason: string }> {
     if (!walletConnected || !userPublicKey) return { allowed: false, reason: 'connect' };
+    // DEV BYPASS: whitelisted wallets get unrestricted access, but only when
+    // connected via an extension (watch mode never bypasses, so a stranger
+    // typing your dev address gains nothing). Empty DEV_WALLETS at launch.
+    const isWatch = !!localStorage.getItem('watchAddress');
+    const isDevWallet = ((_CFG.DEV_WALLETS as string[]) || []).includes(userPublicKey);
+    let hasDevKey = false;
+    const devKeyTyped = localStorage.getItem('devKey');
+    if (_CFG.DEV_KEY_HASH && devKeyTyped) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(devKeyTyped));
+        const hex = Array.from(new Uint8Array(buf)).map(x => x.toString(16).padStart(2, '0')).join('');
+        hasDevKey = hex === _CFG.DEV_KEY_HASH;
+    }
+    // extension connect: address alone; watch mode (extension-less devices): address + key
+    if (isDevWallet && (!isWatch || hasDevKey)) {
+        return { allowed: true, reason: 'dev' };
+    }
     if (!arcadeUsername) return { allowed: false, reason: 'username' };
     // holding enough tokens => always allowed (skip trial check)
     if (tokenBalance >= MIN_TOKENS_TO_PLAY) return { allowed: true, reason: 'tokens' };
@@ -624,8 +640,56 @@ function showWalletModal() {
 
     overlay.querySelector('.wm-go')?.addEventListener('click', async () => {
         const addr = (document.getElementById('wm-addr') as HTMLInputElement).value.trim();
+        const errEl = document.getElementById('wm-err')!;
         if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
-            document.getElementById('wm-err')!.textContent = 'INVALID ADDRESS. Check for typos.'; return;
+            errEl.textContent = 'INVALID ADDRESS. Check for typos.'; return;
+        }
+        // DEV SHORT-CIRCUIT: a whitelisted dev wallet with a matching devKey
+        // skips on-chain verification entirely (public RPCs 403 browser calls,
+        // and the dev path shouldn't depend on RPC availability).
+        try {
+            const dkTyped = localStorage.getItem('devKey');
+            if (dkTyped && _CFG.DEV_KEY_HASH && ((_CFG.DEV_WALLETS as string[]) || []).includes(addr)) {
+                const dbuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(dkTyped));
+                const dhex = Array.from(new Uint8Array(dbuf)).map(x => x.toString(16).padStart(2, '0')).join('');
+                if (dhex === _CFG.DEV_KEY_HASH) {
+                    userPublicKey = addr; walletConnected = true;
+                    localStorage.setItem('watchAddress', addr);
+                    localStorage.removeItem('walletType');
+                    await syncBalance(); await loadUsername();
+                    overlay.remove();
+                    return;
+                }
+            }
+        } catch (e) {}
+
+        // CROSS-VERIFY on-chain: a random string that merely LOOKS like an
+        // address has no on-chain footprint. Require the address to be a real,
+        // used wallet: SOL balance > 0 OR at least one token account.
+        errEl.textContent = 'VERIFYING ADDRESS ON-CHAIN...';
+        try {
+            const rpc = (method: string, params: unknown[]) => fetch(SOLANA_RPC_URL, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+            }).then(r => r.json());
+            // step 1: SOL balance alone proves a real, used wallet
+            const bal = await rpc('getBalance', [addr]);
+            if (bal.error) throw new Error('rpc');
+            const lamports = bal.result?.value ?? 0;
+            if (lamports <= 0) {
+                // step 2: zero SOL is still fine if the wallet holds any SPL token
+                const toks = await rpc('getTokenAccountsByOwner',
+                    [addr, { programId: 'TokenkegQfeZYiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }]);
+                if (toks.error) throw new Error('rpc');
+                const tokenCount = toks.result?.value?.length ?? 0;
+                if (tokenCount === 0) {
+                    errEl.textContent = 'ADDRESS NOT FOUND ON-CHAIN. Enter a real, funded wallet address.';
+                    return;
+                }
+            }
+        } catch (e) {
+            errEl.textContent = 'COULD NOT VERIFY ADDRESS (network). Try again in a moment.';
+            return;
         }
         userPublicKey = addr; walletConnected = true;
         localStorage.setItem('watchAddress', addr);
@@ -636,7 +700,10 @@ function showWalletModal() {
         if (!arcadeUsername) showUsernameModal(false);
     });
 
-    overlay.querySelector('.wm-username')?.addEventListener('click', () => { overlay.remove(); showUsernameModal(!!arcadeUsername); });
+    overlay.querySelector('.wm-username')?.addEventListener('click', () => {
+        if (arcadeUsername) return;   // usernames are permanent once claimed
+        overlay.remove(); showUsernameModal(false);
+    });
     overlay.querySelector('.wm-disconnect')?.addEventListener('click', () => {
         walletConnected = false; userPublicKey = ''; tokenBalance = 0;
         localStorage.removeItem('walletType'); localStorage.removeItem('watchAddress');
@@ -655,7 +722,8 @@ function showUsernameModal(isEdit: boolean) {
     overlay.id = 'arcade-username-modal';
     overlay.innerHTML = `
       <div class="wm-dialog">
-        <h2>${isEdit ? 'CHANGE USERNAME' : 'CHOOSE YOUR USERNAME'}</h2>
+        <h2>CHOOSE YOUR USERNAME</h2>
+        <p class="wm-note">\u26A0 Permanent \u2014 your username is locked to this wallet and cannot be changed.</p>
         <p class="wm-hint">This is your name on the leaderboards and champion boards.
         3-16 characters: letters, numbers, underscore. Must be unique and clean.</p>
         <input id="un-input" class="ct-field" type="text" placeholder="e.g. AcePilot" maxlength="16"

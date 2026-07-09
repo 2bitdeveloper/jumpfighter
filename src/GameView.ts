@@ -209,7 +209,7 @@ export class GameView {
                     'apikey': this.supabaseKey, 
                     'Content-Type': 'application/json' 
                 }, 
-                body: JSON.stringify({ board_id: boardKey, player_name: playerName, telemetry: this.telemetryLog }) 
+                body: JSON.stringify({ board_id: boardKey, player_name: playerName, telemetry: this.telemetryLog , wallet_address: this.walletAddress || null }) 
             });
             console.log("[SECURITY] Telemetry package transmitted to Supabase Edge Function.");
         } catch (e) {

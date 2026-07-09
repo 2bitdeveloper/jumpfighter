@@ -83,7 +83,7 @@
     if (telemetry.length === 0) return;
     fetch(SUPABASE_URL + '/functions/v1/validate-score', {
       method: 'POST', headers: sbHeaders,
-      body: JSON.stringify({ board_id: BOARD_ID, player_name: playerName(), telemetry: telemetry })
+      body: JSON.stringify({ board_id: BOARD_ID, player_name: playerName(), telemetry: telemetry, wallet_address: walletAddress || null })
     }).catch(function () {});
   }
 

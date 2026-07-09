@@ -215,7 +215,7 @@ export class Web3Service {
         try {
             await fetch(`${this.SUPABASE_URL}/functions/v1/validate-score`, {
                 method: 'POST', headers: this.sbHeaders(),
-                body: JSON.stringify({ board_id: this.BOARD_ID, player_name: this.playerName, telemetry })
+                body: JSON.stringify({ board_id: this.BOARD_ID, player_name: this.playerName, telemetry, wallet_address: this.userPublicKey || null })
             });
         } catch (e) { console.error("[WEB3] Score submission failed", e); }
     }

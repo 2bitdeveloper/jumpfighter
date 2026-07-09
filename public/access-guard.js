@@ -51,6 +51,25 @@
     var username = '';
     try { username = localStorage.getItem('arcadeUsername') || ''; } catch (e) {}
     if (!addr) return bounce('connect');
+
+    // DEV BYPASS: unrestricted access for whitelisted wallets, but only when
+    // the address came from a connected extension (provider-resolved), never
+    // from a typed watch address. Empty DEV_WALLETS in arcade-config.js at launch.
+    try {
+      var isWatch = !!localStorage.getItem('watchAddress');
+      var isDevWallet = (CFG.DEV_WALLETS || []).indexOf(addr) >= 0;
+      var hasDevKey = false;
+      if (CFG.DEV_KEY_HASH && localStorage.getItem('devKey')) {
+        var buf = await crypto.subtle.digest('SHA-256',
+          new TextEncoder().encode(localStorage.getItem('devKey')));
+        var hex = Array.prototype.map.call(new Uint8Array(buf),
+          function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+        hasDevKey = hex === CFG.DEV_KEY_HASH;
+      }
+      // extension connect: address alone suffices; watch mode: also needs the key
+      if (isDevWallet && (!isWatch || hasDevKey)) return boot();
+    } catch (e) {}
+
     if (!username) return bounce('username');
 
     // holders always pass

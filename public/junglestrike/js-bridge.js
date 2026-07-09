@@ -1,16 +1,16 @@
 // ============================================================
-// SUNSET DRIFT <-> 2BITARCADE BRIDGE
-// Score = distance driven. The game drives run boundaries via the
-// SunsetDriftBridge.onStart / onGameOver hooks. One telemetry stamp
-// per 100 distance. Reads shared config from window.ARCADE_CONFIG.
+// JUNGLE STRIKE <-> 2BITARCADE BRIDGE
+// Score = points from kills + stage bonuses. One telemetry stamp per
+// 500 points. Game drives run boundaries via onStart / onGameOver.
+// Reads shared config from window.ARCADE_CONFIG.
 // ============================================================
 (function () {
   'use strict';
   var CFG = window.ARCADE_CONFIG || {};
   var SUPABASE_URL = CFG.SUPABASE_URL;
   var SUPABASE_KEY = CFG.SUPABASE_KEY;
-  var BOARD_ID = 'sunset_drift';
-  var MILESTONE = 100;
+  var BOARD_ID = 'jungle_strike';
+  var MILESTONE = 500;
 
   var sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' };
   var guestName = 'Guest_' + (Math.floor(Math.random() * 9000) + 1000);
@@ -21,7 +21,6 @@
     if (custom) return custom;
     return walletAddress ? 'WL_' + walletAddress.substring(0, 6) : guestName;
   }
-
   function restoreWalletIdentity() {
     try {
       var watch = localStorage.getItem('watchAddress');
@@ -49,8 +48,8 @@
   var telemetry = [], runStart = 0, lastMilestone = 0, submitted = false;
   function resetRun() { telemetry = []; runStart = Date.now(); lastMilestone = 0; submitted = false; }
   function tick() {
-    if (runStart === 0 || !window.SunsetDrift) return;
-    var sc = window.SunsetDrift.getScore();
+    if (runStart === 0 || !window.JungleStrike) return;
+    var sc = window.JungleStrike.getScore();
     while (sc >= lastMilestone + MILESTONE) {
       lastMilestone += MILESTONE;
       var t = Date.now() - runStart;
@@ -68,7 +67,7 @@
     }).catch(function () {});
   }
 
-  window.SunsetDriftBridge = {
+  window.JungleStrikeBridge = {
     onStart: function () { resetRun(); },
     onGameOver: function () { submitRun(); }
   };
@@ -76,7 +75,7 @@
   restoreWalletIdentity();
   heartbeat();
   setInterval(heartbeat, 45000);
-  setInterval(tick, 200);
+  setInterval(tick, 250);
   window.addEventListener('beforeunload', submitRun);
-  console.log('[SUNSET DRIFT] 2bitArcade bridge armed. Board: ' + BOARD_ID);
+  console.log('[JUNGLE STRIKE] 2bitArcade bridge armed. Board: ' + BOARD_ID);
 })();

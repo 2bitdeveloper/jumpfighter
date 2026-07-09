@@ -57,5 +57,13 @@
   }
   function resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
   function toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.5; return muted; }
-  window.SunsetDriftSound = { startEngine: startEngine, updateEngine: updateEngine, crash: crash, gameOver: gameOver, startMusic: startMusic, resume: resume, toggleMute: toggleMute, ensure: ensure };
+  function beep(isGo) {
+    if (!ctx || muted) return;
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'square';
+    o.frequency.value = isGo ? 880 : 440;      // higher pitch on GO
+    g.gain.value = 0.25; g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (isGo ? 0.5 : 0.15));
+    o.connect(g); g.connect(master); o.start(); o.stop(ctx.currentTime + (isGo ? 0.55 : 0.2));
+  }
+  window.SunsetDriftSound = { startEngine: startEngine, updateEngine: updateEngine, crash: crash, gameOver: gameOver, startMusic: startMusic, resume: resume, toggleMute: toggleMute, ensure: ensure, beep: beep };
 })();
