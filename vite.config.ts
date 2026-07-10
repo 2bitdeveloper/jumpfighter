@@ -21,6 +21,7 @@ export default defineConfig({
         neonracer: resolve(__dirname, 'neonracer.html'),
         sunsetdrift: resolve(__dirname, 'sunsetdrift.html'),
         junglestrike: resolve(__dirname, 'junglestrike.html'),
+        clawstrike: resolve(__dirname, 'clawstrike.html'),
       },
     },
   },

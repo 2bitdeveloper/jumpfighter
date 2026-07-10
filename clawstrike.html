@@ -1,0 +1,5365 @@
+<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1.01'>
+<title>CLAWSTRIKE</title>
+<style>
+    * {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    position: relative;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    background: #000;
+}
+
+#t {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+#g {
+    display: block;
+}
+.context-menu {
+    position: absolute;
+    background-color: #222;
+    border: 1px solid white;
+    min-width: 200px;
+    max-width: 300px;
+    display: none;
+    width: auto;
+    height: auto;
+}
+
+.context-menu > * {
+    display: block;
+    border: none;
+    border-bottom: 1px solid #222;
+    background-color: #000;
+    color: white;
+    outline: none;
+}
+
+.context-menu > button {
+    text-align: left;
+    padding: 12px;
+    cursor: pointer;
+}
+
+.context-menu > button:hover {
+    background-color: #444;
+}
+
+.context-menu .color-swatch-set {
+    display: flex;
+    flex-direction: row;
+    justify-content: start;
+    gap: 12px;
+    padding: 12px;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+}
+
+.context-menu .color-swatch {
+    width: 20px;
+    height: 20px;
+    border: 1px solid #444;
+    display: inline-block;
+    cursor: pointer;
+}
+
+.context-menu .color-swatch:hover {
+    border-color: #fff;
+}
+
+</style>
+
+<div id=t>
+    <canvas id=g>
+</div>
+
+<script src="./arcade-config.js"></script><script src="./access-guard.js"></script><script>
+    DIFFICULTY_NORMAL = {
+    maxDeaths: 999,
+    maxDamageTaken: 1,
+    label: /*nomangle*/'NORMAL'/*/nomangle*/,
+    humanReactionTime: 0.2,
+};
+
+DIFFICULTY_EASY = {
+    ...DIFFICULTY_NORMAL,
+    maxDamageTaken: 3,
+    label: /*nomangle*/'EASY'/*/nomangle*/,
+    humanReactionTime: 0.5,
+};
+
+DIFFICULTY_NINE_LIVES = {
+    ...DIFFICULTY_NORMAL,
+    maxDeaths: 9,
+    label: /*nomangle*/'9 LIVES'/*/nomangle*/,
+};
+
+DIFFICULTIES = [DIFFICULTY_NORMAL, DIFFICULTY_EASY];
+
+let can,
+    ctx,
+    G, // world
+    canvasPrototype = CanvasRenderingContext2D.prototype,
+    CANVAS_WIDTH = 1600,
+    CANVAS_HEIGHT = 900;
+
+inputMode = navigator.userAgent.match(/*nomangle*//andro|ipho|ipa|ipo/i/*/nomangle*/) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    ? 1
+    : 0;
+
+downKeys = {};
+
+ALT_KEYS = {
+    // WASD
+    65: 37,
+    68: 39,
+    87: 38,
+    83: 40,
+
+    // ZQSD
+    90: 38,
+    81: 37,
+};
+
+document.onkeydown = (evt) => {
+    inputMode = 0;
+    downKeys[ALT_KEYS[evt.keyCode] || evt.keyCode] = 1;
+};
+document.onkeyup = (evt) => downKeys[ALT_KEYS[evt.keyCode] || evt.keyCode] = 0;
+onblur = () => downKeys = {};
+
+let TOUCH_DOWN;
+
+ontouchstart = (evt) => {
+    inputMode = 1;
+    evt.preventDefault();
+    updateTouches(evt.touches);
+};
+
+ontouchmove = (evt) => {
+    evt.preventDefault();
+    updateTouches(evt.touches);
+};
+
+ontouchend = (evt) => {
+    evt.preventDefault();
+    updateTouches(evt.touches);
+};
+
+updateTouches = (touches) => {
+    downKeys = {};
+
+    let out = {};
+    for (let touch of touches) {
+        getEventPosition(touch, can, out);
+
+        let cellX = ~~(4 * out.x / can.width);
+        let cellY = ~~((can.height - out.y) / 250);
+        downKeys[37] ||= cellX == 0;
+        downKeys[39] ||= cellX == 1;
+        downKeys[40] ||= cellX == 2;
+        downKeys[38] ||= cellX == 3 && cellY == 0;
+        downKeys[32] ||= cellX == 3 && cellY == 1;
+        downKeys[69] ||= cellX == 3 && cellY == 2;
+    }
+
+    TOUCH_DOWN = touches.length > 0;
+};
+
+getEventPosition = (evt, can, out) => {
+    if (!can) return;
+    let canvasRect = can.getBoundingClientRect();
+    out.x = (evt.pageX - canvasRect./*nomangle*/left/*/nomangle*/) / canvasRect.width * can.width;
+    out.y = (evt.pageY - canvasRect./*nomangle*/top/*/nomangle*/) / canvasRect.height * can.height;
+}
+
+normalizeAngle = (angle) => {
+    let normalized = angle;
+    while (normalized < -PI) normalized += TWO_PI;
+    while (normalized > PI) normalized -= TWO_PI;
+    return normalized;
+}
+
+between = (a, b, c) => {
+    if (b < a) return a;
+    if (b > c) return c;
+    return b;
+}
+
+isBetween = (a, b, c) => {
+    return (a <= b && b <= c) || (a >= b && b >= c);
+}
+
+roundToNearest = (x, precision) => {
+    return round(x / precision) * precision;
+}
+
+floorToNearest = (x, precision) => {
+    return floor(x / precision) * precision;
+}
+
+ceilToNearest = (x, precision) => {
+    return ceil(x / precision) * precision;
+}
+
+interpolate = (a, b, t) => {
+    return a + (b - a) * between(0, t, 1);
+}
+
+distance = (a, b) => {
+    return pointDistance(a.x, a.y, b.x, b.y);
+}
+
+pointDistance = (x1, y1, x2, y2) => {
+    return hypot(x1 - x2, y1 - y2);
+}
+
+angleBetween = (a, b) => {
+    return atan2(b.y - a.y, b.x - a.x);
+}
+
+rnd = (min, max) => {
+    return random() * (max - min) + min;
+}
+
+// Make Math global
+let math = Math;
+Object.getOwnPropertyNames(math).forEach(n => window[n] = window[n] || math[n]);
+
+TWO_PI = PI * 2;
+
+easeInQuad = (x) => x * x;
+easeOutSine = (x) => sin((x * PI) / 2);
+linear = (x) => x;
+
+onresize = () => {
+    let windowWidth = innerWidth,
+        windowHeight = innerHeight,
+
+        availableRatio = windowWidth / windowHeight, // available ratio
+        canvasRatio = CANVAS_WIDTH / CANVAS_HEIGHT, // base ratio
+        appliedWidth,
+        appliedHeight,
+        containerStyle = t.style;
+
+    CANVAS_WIDTH = 1600;
+    CANVAS_HEIGHT = 900;
+
+    let expectedPixels = CANVAS_WIDTH * CANVAS_HEIGHT;
+
+    if (inputMode === 1) {
+        // Flip the aspect ratio if in portrait
+        if (windowWidth > windowHeight) {
+            let tmpWidth = CANVAS_WIDTH;
+            CANVAS_WIDTH = CANVAS_HEIGHT
+            CANVAS_HEIGHT = tmpWidth;
+        }
+
+        // Adjust the ratio so we fill the screen
+        let currentAspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
+        if (currentAspectRatio < availableRatio) {
+            CANVAS_HEIGHT = CANVAS_WIDTH / availableRatio;
+        } else {
+            CANVAS_WIDTH = CANVAS_HEIGHT * availableRatio;
+        }
+
+        // Hack so we have enough pixels that we aren't zoomed in too much
+        while (CANVAS_WIDTH * CANVAS_HEIGHT / expectedPixels < 0.5) {
+            CANVAS_WIDTH *= 2;
+            CANVAS_HEIGHT *= 2;
+        }
+    } else {
+        // Desktop mode, keep the aspect ratio intact
+        if (availableRatio <= canvasRatio) {
+            appliedWidth = windowWidth;
+            appliedHeight = appliedWidth / canvasRatio;
+        } else {
+            appliedHeight = windowHeight;
+            appliedWidth = appliedHeight * canvasRatio;
+        }
+    }
+
+    can.width = CANVAS_WIDTH;
+    can.height = CANVAS_HEIGHT;
+
+    containerStyle.width = appliedWidth + 'px';
+    containerStyle.height = appliedHeight + 'px';
+};
+
+class Raycaster {
+    constructor(structure) {
+        this.structure = structure;
+    }
+
+    castRay(x, y, angle, maxDistance) {
+        let castHorizontal = this.castAgainstHorizontal(x, y, angle, maxDistance);
+        let castVertical = this.castAgainstVertical(x, y, angle, maxDistance);
+
+        let impact;
+        if (!castHorizontal) {
+            impact = castVertical;
+        } else if(!castVertical) {
+            impact = castHorizontal;
+        } else {
+            impact = pointDistance(x, y, castHorizontal.x, castHorizontal.y) < pointDistance(x, y, castVertical.x, castVertical.y)
+                ? castHorizontal
+                : castVertical;
+        }
+
+        if (pointDistance(x, y, impact.x, impact.y) > maxDistance) {
+            impact = {
+                'x': x + cos(angle) * maxDistance,
+                'y': y + sin(angle) * maxDistance
+            };
+        }
+
+        return impact;
+    }
+
+    castAgainstHorizontal(startX, startY, angle, maxDistance) {
+        let pointingDown = sin(angle) > 0;
+
+        let y = ~~(startY / 50) * 50 + (pointingDown ? 50 : -0.0001);
+        let x = startX + (y - startY) / tan(angle);
+
+        let yStep = pointingDown ? 50 : -50;
+        let xStep = yStep / tan(angle);
+
+        return this.doCast(x, y, xStep, yStep, maxDistance);
+    }
+
+    castAgainstVertical(startX, startY, angle, maxDistance) {
+        let pointingRight = cos(angle) > 0;
+
+        let x = ~~(startX / 50) * 50 + (pointingRight ? 50 : -0.0001);
+        let y = startY + (x - startX) * tan(angle);
+
+        let xStep = pointingRight ? 50 : -50;
+        let yStep = xStep * tan(angle);
+
+        return this.doCast(x, y, xStep, yStep, maxDistance);
+    }
+
+    doCast(startX, startY, xStep, yStep, maxDistance){
+        let x = startX,
+            y = startY;
+
+        while (pointDistance(x, y, startX, startY) < maxDistance) {
+            if (1 && G) {
+                G.castIterations++;
+            }
+            if (this.structure.cellAt(x, y)) {
+                // Got a block!
+                return { x, y };
+            } else if(this.isOut(x, y)) {
+                // Out of bounds
+                break;
+            } else {
+                x += xStep;
+                y += yStep;
+            }
+        }
+
+        return { x, y };
+    }
+
+    isOut(x, y) {
+        return !between(0, x, this.structure.width) ||
+            !between(0, y, this.structure.height);
+    }
+}
+
+class Rect {
+    x = 0;
+    y = 0;
+    width = 0;
+    height = 0;
+
+    intersects(other) {
+        return abs(this.x - other.x) < (this.width + other.width) / 2 &&
+            abs(this.y - other.y) < (this.height + other.height) / 2;
+    }
+
+    contains(point) {
+        return abs(this.x - point.x) < this.width / 2 &&
+            abs(this.y - point.y) < this.height / 2;
+    }
+
+    render() {
+        if (1) ctx.wrap(() => {
+            ctx.translate(this.x, this.y);
+            ctx.strokeStyle = '#fff';
+            ctx.strokeRect(-this.width / 2, -this.height / 2, this.width, this.height);
+        });
+    }
+}
+
+firstItem = (iterable) => {
+    for (let item of iterable) {
+        return item;
+    }
+}
+
+canvasPrototype.wrap = function(f) {
+    this.save();
+    f();
+    this.restore();
+};
+
+createCanvas = (w, h, render) => {
+    let can = document.createElement('canvas');
+    can.width = w;
+    can.height = h;
+
+    let ctx = can.getContext('2d');
+
+    return render(ctx, can) || can;
+};
+
+canvasPrototype.drawCommandText = function(text) {
+    let colorStack = [this.fillStyle];
+    this.wrap(() => {
+        let { width } = ctx.measureText(text);
+        this.translate(
+            this.textAlign == /*nomangle*/'center'/*/nomangle*/
+            ? -width / 2
+            : this.textAlign == /*nomangle*/'right'/*/nomangle*/
+            ? -width
+            : 0,
+            0
+        );
+
+        this.textAlign = /*nomangle*/'left'/*/nomangle*/;
+
+        for (let char of text.split('')) {
+            if (char == '[') colorStack.push('#f00');
+            if (char == '(') colorStack.push('#0ff');
+            this.fillStyle = colorStack[colorStack.length - 1];
+            this.strokeText(char, 0, 0);
+            this.fillText(char, 0, 0);
+            this.translate(this.measureText(char).width, 0);
+            if (char == ']' || char == ')') colorStack.pop();
+        }
+    });
+}
+
+class Entity {
+    categories = [];
+    seed = random();
+
+    constructor() {
+        this.x = this.y = this.previousX = this.previousY = this.age = 0;
+        this.z = 0;
+    }
+
+    get hitbox() {
+        this.cachedHitbox ||= new Rect();
+        this.cachedHitbox.x = this.x;
+        this.cachedHitbox.y = this.y;
+        return this.cachedHitbox;
+    }
+
+    cycle(elapsed) {
+        this.age += elapsed;
+
+        this.previousX = this.x;
+        this.previousY = this.y;
+    }
+
+    renderBackground() {
+
+    }
+
+    render() {
+
+    }
+
+    cancelCamera() {
+        let camera = firstItem(this.world.category('camera'));
+        ctx.translate(
+            camera.actual.x - (1 / camera.zoom) * CANVAS_WIDTH / 2,
+            camera.actual.y - (1 / camera.zoom) * CANVAS_HEIGHT / 2,
+        );
+        ctx.scale(1 / camera.zoom, 1 / camera.zoom);
+    }
+
+    renderDebug() {
+        if (1 && 0) this.hitbox.render();
+
+        if (1 && 0) ctx.wrap(() => {
+            this.cancelCamera();
+
+            let cornerRadius = 10;
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-cornerRadius, -cornerRadius ,cornerRadius * 2, cornerRadius * 2);
+            ctx.fillRect(CANVAS_WIDTH -cornerRadius, -cornerRadius ,cornerRadius * 2, cornerRadius * 2);
+            ctx.fillRect(CANVAS_WIDTH -cornerRadius, CANVAS_HEIGHT-cornerRadius ,cornerRadius * 2, cornerRadius * 2);
+            ctx.fillRect(-cornerRadius, CANVAS_HEIGHT-cornerRadius ,cornerRadius * 2, cornerRadius * 2);
+        });
+    }
+
+    interp(
+        interpProperty,
+        fromValue,
+        toValue,
+        interpDuration,
+        easing = linear,
+    ) {
+        return this.world.addEntity(new Interpolator(
+            this,
+            interpProperty,
+            fromValue,
+            toValue,
+            interpDuration,
+            easing,
+        )).awaitCompletion();
+    }
+}
+
+class Human extends Entity {
+
+    type = 'human';
+
+    z = 8;
+
+    facing = 1;
+    walking = 0;
+    walkingDirection = 1;
+
+    lastDamage = -9;
+
+    vY = 0;
+    lastLanded = -9;
+
+    radiusX = 10;
+    radiusY = 40;
+
+    nextShot = 0;
+
+    aim = 0;
+    lastSeenCat = -9;
+    lastCatCheck = 0;
+    visionDistance = 0;
+
+    health = 3;
+
+    color = '#000';
+
+    categories = ['human'];
+
+    constructor() {
+        super();
+
+        this.hitbox.width = this.radiusX * 2;
+        this.hitbox.height = this.radiusY * 2;
+    }
+
+    get landed() {
+        return this.age - this.lastLanded < 0.1;
+    }
+
+    get eyes() {
+        this.visionOrigin ||= [{}, {}];
+        this.visionOrigin[0].x = this.x;
+        this.visionOrigin[0].y = this.y - 30;
+        this.visionOrigin[1].x = this.x;
+        this.visionOrigin[1].y = this.y - 20;
+        return this.visionOrigin;
+    }
+
+    get feetVision() {
+        this.feetVisionHitbox ||= new Rect();
+        this.feetVisionHitbox.width = 100;
+        this.feetVisionHitbox.height = 50;
+        this.feetVisionHitbox.x = this.x + this.facing * this.feetVisionHitbox.width / 2;
+        this.feetVisionHitbox.y = this.y + this.feetVisionHitbox.height / 2;
+        return this.feetVisionHitbox;
+    }
+
+    canSee(target) {
+        for (let structure of this.world.category('structure')) {
+            for (let eye of this.eyes) {
+                let distanceToTarget = distance(eye, target);
+                if (distanceToTarget > this.visionDistance) return 0;
+
+                let angleToTarget = angleBetween(eye, target);
+                let impact = structure.raycaster.castRay(eye.x, eye.y, angleToTarget, distanceToTarget);
+                if (impact && distance(eye, impact) < distanceToTarget - 10) {
+                    return 0;
+                }
+            }
+        }
+        return 1;
+    }
+
+    get confused() {
+        return this.age - this.lastSeenCat < 2;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        let { facing } = this;
+
+        // Left/right movement
+        this.walking = ((this.age + this.seed * 8) % 8) < 5 && !this.confused && this.landed && this.age - this.lastDamage > 0.5;
+        if (this.walking) {
+            this.x += this.walkingDirection * 100 * elapsed;
+        }
+
+        // Fall down
+        this.vY += elapsed * 400;
+        this.y += this.vY * elapsed;
+
+        let { x, y } = this;
+
+        for (let structure of this.world.category('structure')) {
+            structure.reposition(this, this.radiusX, this.radiusY, this.x, this.y - 1);
+
+            if (
+                !structure.cellAt(this.x - this.radiusX, this.y + this.radiusY + 1) ||
+                structure.cellAt(this.x - this.radiusX + 1, this.y) ||
+                structure.cellAt(this.x - this.radiusX + 1, this.y - this.radiusY + 1)
+            ) {
+                this.walkingDirection = 1;
+            }
+
+            if (
+                !structure.cellAt(this.x + this.radiusX, this.y + this.radiusY + 1) ||
+                structure.cellAt(this.x + this.radiusX, this.y) ||
+                structure.cellAt(this.x + this.radiusX, this.y - this.radiusY + 1)
+            ) {
+                this.walkingDirection = -1;
+            }
+        }
+
+        if (y !== this.y) {
+            this.vY = 0;
+            if (this.y <= y) this.lastLanded = this.age;
+        }
+        if (x !== this.x) this.walkingDirection = sign(this.x - x);
+
+        // Aim at the cat
+        let { seesCat } = this;
+
+        if (this.age - this.lastCatCheck > 0.2) {
+            this.lastCatCheck = this.age;
+
+            this.seesCat = 0;
+            for (let cat of this.world.category('cat')) {
+                let angleToCat = angleBetween(this.eyes[0], cat);
+                let baseAngle = this.facing > 0 ? 0 : PI;
+                let angleDiff = normalizeAngle(angleToCat - baseAngle);
+                let divider = cat.y < this.y ? 3 : 4;
+                if (
+                    !seesCat &&
+                    abs(angleDiff) > PI / divider &&
+                    !this.feetVision.contains(cat)
+                ) continue; // Out of vision cone
+                if (!this.canSee(cat)) continue;
+
+                this.seesCat = cat;
+            }
+        }
+
+
+        // Cat was just spotted, delay the next shot a bit
+        if (!seesCat && this.seesCat) {
+            this.nextShot = max(this.nextShot, G.difficulty.humanReactionTime);
+            zzfx(...[2,,400,.02,.02,.25,2,2.5,,114,,,,.3,,.1,.08,.63,.01,,464]); // Pickup 605
+        }
+
+        if (this.seesCat && this.age - this.lastDamage > 0.5) {
+            this.facing = sign(this.seesCat.x - this.x) || 1;
+            this.aim = atan2(this.seesCat.y - this.eyes[0].y, this.seesCat.x - this.eyes[0].x);
+            this.lastSeenCat = this.age;
+        } else {
+            if (this.age - this.lastSeenCat > 2) {
+                this.facing = this.walkingDirection;
+                this.aim = atan2(1, this.facing / 2);
+            }
+        }
+
+        if ((this.nextShot -= elapsed) <= 0 && this.seesCat) {
+            this.shoot();
+        }
+
+        this.visionDistance = min(500, this.visionDistance + elapsed * 2000);
+        if (this.facing != this.previousFacing) {
+            this.visionDistance = 0;
+            this.previousFacing = this.facing;
+        }
+    }
+
+    shoot() {
+        let bullet = this.world.addEntity(new Bullet(this));
+        bullet.x = this.x + this.facing * 10 + cos(this.aim) * 35;
+        bullet.y = this.y - 20 + sin(this.aim) * 35;
+        this.nextShot = 0.2;
+        this.lastBullet = bullet;
+
+        for (let i = 0 ; i < 5 ; i++) {
+            let particle = this.world.addEntity(new Particle());
+            particle.x = bullet.x;
+            particle.y = bullet.y;
+            particle.size = rnd(5, 10);
+
+            particle.animate(rnd(0.2, 0.5), {
+                x: rnd(-10, 10),
+                y: rnd(-20, -50),
+                size: -particle.size,
+            });
+        }
+    }
+
+    hear(cat) {
+        this.lastSeenCat = this.age;
+        this.facing = this.walkingDirection = sign(cat.x - this.x) || 1;
+        this.aim = atan2(1, this.facing / 2);
+    }
+
+    damage() {
+        this.lastDamage = this.age;
+        this.nextShot = max(this.nextShot, 1);
+
+        // Remove the last bullet if it was shot recently
+        // This is to avoid getting shot while hitting an enemy
+        if (this.lastBullet?.age < 0.2) {
+            this.lastBullet.world?.removeEntity(this.lastBullet);
+            this.lastBullet = 0;
+        }
+
+        zzfx(...[1.1,,339,,.01,.05,1,2.4,-6,2,,,.09,1.1,,.5,,.67,.1]); // Hit 222
+
+        if (--this.health <= 0) {
+            zzfx(...[2,,69,.02,.17,.55,4,3.3,2,,,,,1,,.1,.2,.4,.15]); // Explosion 128
+            this.world.removeEntity(this);
+
+            for (let i = 0 ; i < 50 ; i++) {
+                let particle = this.world.addEntity(new Particle());
+                particle.x = this.x + rnd(-this.hitbox.width, this.hitbox.width) / 2;
+                particle.y = this.y + rnd(-this.hitbox.height, this.hitbox.height) / 2;
+                particle.size = rnd(5, 10);
+
+                particle.animate(rnd(0.5, 1), {
+                    x: rnd(-100, 100),
+                    y: rnd(-20, -50),
+                    size: -particle.size,
+                });
+            }
+        }
+
+        fireworks(
+            this.world,
+            this,
+            this.health ? 10 : 50,
+            this.radiusX,
+            this.radiusY
+        );
+    }
+
+    render() {
+        ctx.translate(this.x, this.y);
+        ctx.scale(this.facing, 1);
+
+        ctx.fillStyle = this.age - this.lastDamage < 0.1 ? '#fff' : this.color;
+
+        // Body
+        ctx.fillRect(-20 / 2, -40 / 2, 20, 40);
+
+        // Legs
+        ctx.wrap(() => {
+            ctx.translate(0, 40 / 2 - 8 / 2);
+
+            let legBaseAngle = this.walking
+                ? sin(this.age * PI * 2 * 2) * PI / 16
+                : 0;
+
+            ctx.wrap(() => {
+                ctx.translate(-20 / 2 + 8 / 2, 0);
+                ctx.rotate(legBaseAngle);
+                ctx.fillRect(-8 / 2, 0, 8, 20 + 8 / 2);
+            });
+
+            ctx.wrap(() => {
+                ctx.translate(20 / 2 - 8 / 2, 0);
+                ctx.rotate(-legBaseAngle);
+                ctx.fillRect(-8 / 2, 0, 8, 20 + 8 / 2);
+            });
+        });
+
+        ctx.wrap(() => {
+            // Neck
+            ctx.translate(0, -40 / 2);
+            ctx.fillRect(-8 / 2, 0, 8, -4);
+
+            // Head
+            ctx.translate(0, -4 - 15 / 2);
+            ctx.fillRect(-15 / 2, -15 / 2, 15, 15);
+        });
+
+        // Arm
+        ctx.wrap(() => {
+            ctx.translate(20 / 2 - 5 / 2, -40 / 2 + 5 / 2);
+
+            let angle = this.aim;
+            if (this.facing < 0) {
+                angle = atan2(sin(angle), cos(angle) * -1);
+            }
+
+            ctx.rotate(angle);
+            ctx.fillRect(0, -5 / 2, 25 + 1, 5);
+
+            // Gun
+            ctx.fillRect(25 - 5, -5 / 2, 15, -5);
+        });
+
+        if (this.age - this.lastSeenCat < 1) ctx.wrap(() => {
+            ctx.translate(0, -70);
+            ctx.scale(this.facing, 1);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 40px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 4;
+
+            ctx.strokeText(this.seesCat ? '!' : '?', 0, 0);
+            ctx.fillText(this.seesCat ? '!' : '?', 0, 0);
+        });
+    }
+
+    renderDebug() {
+        if (!1) return;
+
+        super.renderDebug();
+
+        if (0) ctx.wrap(() => {
+            for (let cat of this.world.category('cat')) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.moveTo(this.eyes.x, this.eyes.y);
+                ctx.lineTo(cat.x, cat.y);
+                ctx.stroke();
+
+                for (let eye of this.eyes) {
+                    for (let structure of this.world.category('structure')) {
+                        let angleToCat = angleBetween(eye, cat);
+                        let distanceToCat = distance(eye, cat);
+                        let impact = structure.raycaster.castRay(eye.x, eye.y, angleToCat, distanceToCat);
+                        if (impact) {
+                            ctx.beginPath();
+                            ctx.strokeStyle = '#f00';
+                            ctx.lineWidth = 2;
+                            ctx.moveTo(eye.x, eye.y);
+                            ctx.lineTo(impact.x, impact.y);
+                            ctx.stroke();
+                        }
+                    }
+                }
+            }
+
+            if (this.seesCat) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#0f0';
+                ctx.lineWidth = 10;
+                ctx.moveTo(this.eyes[0].x, this.eyes[0].y);
+                ctx.lineTo(this.seesCat.x, this.seesCat.y);
+                ctx.stroke();
+            }
+        });
+
+        if (0) ctx.wrap(() => {
+            this.feetVision.render();
+        });
+
+        if (0) ctx.wrap(() => {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.translate(this.eyes[0].x, this.eyes[0].y);
+            ctx.scale(this.facing, 1);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, this.visionDistance, - PI / 3, PI / 4);
+            ctx.closePath();
+            ctx.stroke();
+        });
+    }
+}
+
+class Bullet extends Entity {
+
+    z = 4;
+
+    categories = ['bullet'];
+
+    constructor(owner) {
+        super();
+        this.owner = owner;
+        this.angle = owner.aim;
+        this.hitbox.width = this.hitbox.height = 2;
+
+        zzfx(...[0.8,,221,.01,.03,.19,4,2.5,,,,,,1.1,,.2,,.61,.09]); // Shoot 93
+    }
+
+    cycle(elapsed) {
+        let { x, y } = this;
+
+        this.x += elapsed * cos(this.angle) * 800;
+        this.y += elapsed * sin(this.angle) * 800;
+
+        // Structure hits
+        for (let structure of this.world.category('structure')) {
+            if (structure.cellAt(this.x, this.y)) {
+                this.world.removeEntity(this);
+
+                fireworks(
+                    this.world,
+                    { x, y },
+                    5,
+                );
+                return;
+            }
+        }
+
+        // Cat hits
+        for (let target of this.targets()) {
+            if (target === this.owner) continue; // Don't hit the owner
+            if (target.rolling) continue; // Don't hit rolling cats
+            if (this.hitbox.intersects(target.hitbox)) {
+                this.world.removeEntity(this);
+                target.damage();
+                return;
+            }
+        }
+    }
+
+    * targets() {
+        yield* this.world.category('cat');
+        yield* this.world.category('human');
+    }
+
+    render() {
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        // ctx.shadowColor = '#000';
+        // ctx.shadowOffsetX = 2;
+        // ctx.shadowOffsetY = 2;
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.fillRect(3, -3, -20, 6);
+        ctx.strokeRect(3, -3, -20, 6);
+    }
+}
+
+class ClawEffect extends Entity {
+
+    color = '#fff';
+    z = 11;
+    stroke = 1;
+
+    constructor() {
+        super();
+        this.angle = this.seed * TWO_PI;
+        this.scale = 1 + this.seed * 0.5;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        if (this.age > 1) {
+            this.world?.removeEntity(this);
+        }
+    }
+
+    render() {
+        ctx.translate(this.x, this.y);
+
+        let fadeDuration = 0.25;
+        let fadeProgress = (this.age - (1 - fadeDuration)) / fadeDuration;
+        ctx.globalAlpha *= 1 - min(1, max(0, fadeProgress));
+
+        ctx.rotate(this.angle);
+        ctx.scale(this.scale, this.scale);
+
+        for (let [y, s] of [[0, 1], [-5, 0.8], [5, 0.8]]) {
+            ctx.wrap(() => {
+                ctx.translate(0, y);
+                ctx.scale(s, s);
+                this.drawClaw();
+            });
+        }
+    }
+
+    drawClaw() {
+        ctx.fillStyle = this.color;
+
+        let THICKNESS = 5;
+        let LENGTH = 40;
+        let l = LENGTH * min(1, this.age / 0.1);
+
+        ctx.miterLimit = 10;
+        ctx.beginPath();
+        ctx.translate(-LENGTH / 2, 0);
+        ctx.moveTo(0, 0);
+        ctx.bezierCurveTo(
+            l / 2, -THICKNESS / 2,
+            l / 2, -THICKNESS / 2,
+            l, 0
+        );
+        ctx.bezierCurveTo(
+            l / 2, THICKNESS / 2,
+            l / 2, THICKNESS / 2,
+            0, 0
+        );
+        ctx.closePath();
+        ctx.fill();
+
+        if (this.stroke) ctx.stroke();
+    }
+}
+
+MEOWS = [
+    /*nomangle*/'MEOW'/*/nomangle*/,
+    /*nomangle*/'MEWR'/*/nomangle*/,
+    /*nomangle*/'MEW'/*/nomangle*/,
+    /*nomangle*/'MOW'/*/nomangle*/,
+    /*nomangle*/'MAW'/*/nomangle*/,
+    /*nomangle*/'VRAOW'/*/nomangle*/,
+    /*nomangle*/'MEWR'/*/nomangle*/,
+    /*nomangle*/'MAORRAO'/*/nomangle*/,
+    /*nomangle*/'MEWP'/*/nomangle*/,
+];
+
+class MeowEffect extends Entity {
+
+    z = 1;
+    affected = new Set();
+    textLabel = MEOWS[~~(this.seed * MEOWS.length)];
+
+    textX = rnd(-50, 50);
+    textY = rnd(-20, -50);
+
+    get radius() {
+        return interpolate(0, 400, this.age / 0.5);
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        for (let human of this.world.category('human')) {
+            if (!this.affected.has(human) && distance(this, human) < this.radius) {
+                human.hear(this);
+            }
+        }
+
+        if (this.age > 0.5) {
+            this.world?.removeEntity(this);
+        }
+    }
+
+    render() {
+        ctx.translate(this.x, this.y);
+        ctx.globalAlpha = 1 - this.age / 0.5;
+
+        let count = 5;
+        let spacing = 10;
+
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        for (let r = roundToNearest(this.radius, spacing), i = 0 ; i < count ; r += spacing, i++) {
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, TWO_PI);
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.font = '16px Impact';
+        ctx.fillText(this.textLabel, this.textX, this.textY);
+    }
+}
+
+class Flash extends Entity {
+    alpha = 1;
+    z = 9;
+
+    constructor(color) {
+        super();
+        this.color = color;
+    }
+
+    render() {
+        this.cancelCamera();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    }
+}
+
+class Cat extends Entity {
+
+    type = 'cat';
+
+    z = 3;
+
+    lastDamage = -9;
+    damageTaken = 0;
+
+    facing = 1;
+    attackCooldown = 0;
+    lastAttack = -9;
+    heat = 0;
+    nextHeatReset = 0;
+    releasedAttack = 0;
+
+    radiusX = 20;
+    radiusY = 20;
+
+    rolling = 0;
+    rollingAge = 0;
+
+    releasedJump = 0;
+    jumpStartAge = -9;
+    jumpEndAge = -9;
+    jumpStartY = 0;
+    jumpHoldTime = 0;
+    lastLanded = -9;
+
+    vX = 0;
+    vY = 0;
+
+    viewAngle = 0;
+
+    wallStickX = 0;
+    wallStickDirection = 0;
+    lastStickToWall = -9;
+
+    color = '#000';
+
+    categories = ['cat'];
+
+    constructor() {
+        super();
+
+        this.hitbox.width = this.radiusX * 2;
+        this.hitbox.height = this.radiusY * 2;
+    }
+
+    get attackHitbox() {
+        this.cachedAttackHitbox ||= new Rect();
+        this.cachedAttackHitbox.x = this.x;
+        this.cachedAttackHitbox.y = this.y;
+        this.cachedAttackHitbox.width = 100;
+        this.cachedAttackHitbox.height = 100;
+        return this.cachedAttackHitbox;
+    }
+
+    jump() {
+        if (this.age < this.jumpEndAge) return;
+        if (!this.releasedJump) return;
+        if (!this.landed && this.age - this.lastStickToWall > 0.1) return;
+
+        zzfx(...[.2,,292,.03,.02,.07,1,.4,,131,,,,,,,,.57,.01]);
+
+        this.jumpStartAge = this.age;
+        this.releasedJump = 0;
+        this.jumpStartY = this.y;
+        this.jumpHoldTime = 0;
+        this.lastLanded = -9;
+
+        if (this.stickingToWall) {
+            this.vX = this.wallStickDirection * 400;
+            this.facing = this.wallStickDirection;
+        }
+
+        for (let i = 0 ; i < 10 ; i++) {
+            let particle = this.world.addEntity(new Particle());
+            particle.size = rnd(5, 10);
+
+            if (this.stickingToWall) {
+                particle.x = this.x - this.wallStickDirection * this.hitbox.width / 2 + rnd(-5, 5);
+                particle.y = this.y + rnd(-1, 1) * this.hitbox.height / 2;
+                particle.animate(rnd(0.2, 0.5), {
+                    x: rnd(20, 50) * this.wallStickDirection,
+                    y: rnd(-20, -50),
+                    size: -particle.size,
+                });
+            } else {
+                particle.x = this.x - rnd(-1, 1) * this.hitbox.width / 2;
+                particle.y = this.y + this.hitbox.height / 2;
+                particle.animate(rnd(0.2, 0.5), {
+                    x: rnd(-40, 40),
+                    y: rnd(-20, -50),
+                    size: -particle.size,
+                });
+            }
+        }
+
+        this.wallStickX = 0;
+        this.wallStickDirection = 0;
+    }
+
+    get stickingToWall() {
+        if (abs(this.x - this.wallStickX) > 5) return 0;
+        if (this.landed) return 0;
+
+        let hasWall = 0;
+        for (let structure of this.world.category('structure')) {
+            if (
+                structure.cellAt(this.x - 50 * this.wallStickDirection, this.y)
+            ) {
+                hasWall = 1;
+                break;
+            }
+        }
+
+        return hasWall;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        if (this.age - this.lastAttack < 0.1) {
+            elapsed *= 0.2;
+        }
+
+        // Roll behavior
+        let { rolling } = this;
+        this.rolling = downKeys[40] && (this.rolling || this.landed && this.rollingReleased);
+
+        if (this.rolling && !rolling) {
+            zzfx(...[.2,0,800,.04,.21,.25,,.5,,30,,,,,16,,,.62,.2,,829]);
+        }
+
+        if (!downKeys[40]) {
+            this.rollingReleased = 1;
+        }
+
+        if (this.rolling) {
+            this.rollingAge += elapsed;
+            this.rollingReleased = 0;
+        } else {
+            this.rollingAge = 0;
+        }
+
+        // Left-right movement
+        {
+            let x = 0;
+            if (downKeys[37]) x = -1;
+            if (downKeys[39]) x = 1;
+            if (this.rolling) x = x || this.facing;
+
+            let resisting = x && sign(x) !== sign(this.vX);
+            let pushing = x && !resisting;
+
+            {
+                let targetVX;
+                let acceleration;
+                if (this.rolling) {
+                    acceleration = 8000;
+                    targetVX = 600 * x;
+                } else if (this.landed) {
+                    if (resisting) {
+                        acceleration = 8000;
+                    } else if (pushing) {
+                        acceleration = 2000;
+                    } else {
+                        acceleration = 3000;
+                    }
+
+                    // More friction when on edge
+                    for (let structure of this.world.category('structure')) {
+                        if (!structure.cellAt(this.x + this.radiusX, this.y + 50) ||
+                            !structure.cellAt(this.x - this.radiusX, this.y + 50)) {
+                                if (!x) acceleration *= 5;
+                        }
+                    }
+
+                    targetVX = 400 * x;
+                } else {
+                    if (resisting) {
+                        acceleration = 3000;
+                    } else if (pushing) {
+                        acceleration = 2000;
+                    } else {
+                        acceleration = 1000;
+                    }
+
+                    targetVX = 600 * x;
+                }
+
+                // if (pushing) {
+                //     targetVX = x * max(abs(targetVX), abs(this.vX));
+                // }
+
+                this.vX += between(-elapsed * acceleration, targetVX - this.vX, elapsed * acceleration);
+            }
+
+            // let speed = (this.rolling ? 600 : 400) * x;
+            this.x += this.vX * elapsed;
+            this.walking = !!x;
+
+            if (!this.stickingToWall) this.facing = x || this.facing;
+        }
+
+        if (downKeys[38]) {
+            if (!this.releasedJump) {
+                this.jumpHoldTime += elapsed;
+            }
+
+            this.jump();
+        } else {
+            this.releasedJump = 1;
+        }
+
+        let { isRising, currentY } = this.jumpData();
+        if (isRising) {
+            // Rising
+            this.y = currentY;
+            this.vY = 0;
+        } else {
+            // Falling
+            this.y += this.vY * elapsed;
+            this.vY += elapsed * (this.stickingToWall ? 100 : 2000);
+        }
+
+        let targetAngle = 0;
+        let angleSpeed = PI * 2;
+        if (this.landed) {
+            targetAngle = 0;
+            angleSpeed *= 4;
+        } else if (isRising) {
+            targetAngle = -PI / 3;
+        } else {
+            targetAngle = PI / 4;
+        }
+
+        let angleDiff = normalizeAngle(targetAngle - this.viewAngle);
+        this.viewAngle += between(-elapsed * angleSpeed, angleDiff, elapsed * angleSpeed);
+
+        if (!downKeys[32]) {
+            this.releasedAttack = 1;
+        } else if (this.attackCooldown <= 0 && this.releasedAttack && !this.rolling) {
+            this.attack();
+        }
+
+        if ((this.nextHeatReset -= elapsed) <= 0) {
+            this.heat = 0;
+        }
+
+        this.attackCooldown -= elapsed;
+
+        let { x, y, landed } = this;
+        for (let structure of this.world.category('structure')) {
+            structure.reposition(this, this.radiusX, this.radiusY, this.previousX, this.previousY);
+        }
+
+        if (this.y > y) {
+            this.jumpStartAge = -999;
+        } else if (this.y < y) {
+            this.vY = 0;
+            this.lastLanded = this.age;
+            this.viewAngle = 0;
+        }
+
+        if (this.landed && !landed) {
+            for (let i = 0 ; i < 10 ; i++) {
+                let particle = this.world.addEntity(new Particle());
+                particle.x = this.x - rnd(-1, 1) * this.hitbox.width / 2;
+                particle.y = this.y + this.hitbox.height / 2;
+                particle.size = rnd(5, 10);
+
+                particle.animate(rnd(0.2, 0.5), {
+                    x: rnd(-40, 40),
+                    y: rnd(-20, -50),
+                    size: -particle.size,
+                });
+            }
+
+            zzfx(...[.05,,339,.01,.01,,4,4.4,11,-6,-486,.09,,,,,,.64,.03,.2]); // Blip 426
+        }
+
+        if (x !== this.x) {
+            let readjustmentDirection = sign(this.x - x);
+            if (this.facing !== readjustmentDirection) {
+                this.vX = 0;
+            }
+
+            if (!this.stickingToWall) {
+                if (y === this.y && !this.landed && this.facing !== readjustmentDirection) {
+                    this.wallStickX = this.x;
+                    this.wallStickDirection = readjustmentDirection;
+                }
+            }
+
+            if (this.rolling && sign(this.x - x) !== this.facing) {
+                this.rolling = 0;
+
+                this.vX = sign(this.x - x) * 400;
+                zzfx(...[5,,27,.03,.01,.03,3,.8,,,,,.01,,128,.9,.08,.69,.01,.21,110]); // Blip 471
+                // zzfx(...[0.3,,365,.01,.04,.13,3,2.9,,-17,,,,1.3,41,,.08,.54,.03,,923]); // Hit 508
+                // this.x += sign(this.x - x) * 25;
+            }
+        }
+
+        if (!this.stickingToWall || downKeys[40]) {
+            this.wallStickX = 0;
+        } else {
+            this.viewAngle = -PI / 2;
+            this.lastStickToWall = this.age;
+        }
+
+        if (this.releasedMeow && downKeys[69] && this.age - (this.lastMeow || 0) > 0.3) {
+            this.releasedMeow = 0;
+            this.lastMeow = this.age;
+            zzfx(...[.5,,282,.02,.03,,2,4,,,,,,1,,,,.78,.03]); // Jump 1017
+            let meow = this.world.addEntity(new MeowEffect());
+            meow.x = this.x;
+            meow.y = this.y;
+        }
+
+        this.releasedMeow ||= !downKeys[69];
+
+        if (this.rolling && this.landed && this.age - (this.lastRollParticle || 0) > 1 / 60) {
+            this.lastRollParticle = this.age;
+
+            let particle = this.world.addEntity(new Particle());
+            particle.x = this.x + rnd(-10, 10);
+            particle.y = this.y + this.hitbox.height / 2 + rnd(0, -10);
+            particle.size = rnd(4, 8);
+
+            particle.animate(rnd(0.2, 0.5), {
+                x: rnd(-10, 10),
+                y: rnd(-20, -50),
+                size: -particle.size,
+            });
+        }
+    }
+
+    get landed() {
+        return this.age - this.lastLanded < 0.1;
+    }
+
+    attack() {
+        this.releasedAttack = 0;
+        this.lastAttack = this.age;
+
+        firstItem(this.world.category('camera')).shake(0.05, 5);
+
+        this.nextHeatReset = 0.5;
+        this.heat++;
+        if (this.heat >= 6) {
+            this.attackCooldown = 0.5;
+        } else {
+            this.attackCooldown = 0.1;
+        }
+
+        let target;
+        for (let human of this.world.category('human')) {
+            if (this.attackHitbox.intersects(human.hitbox)) {
+                human.damage();
+                human.x += sign(human.x - this.x) * 10;
+
+                target = human;
+                this.facing = sign(human.x - this.x);
+            }
+        }
+
+        let attack = this.world.addEntity(new ClawEffect());
+        attack.x = this.x + this.facing * 60;
+        attack.y = this.y;
+
+        zzfx(...[0.1,,170,.04,.04,.06,1,1.8,25,4,,,,5,,,,.85,.01]); // Jump 62
+
+        attack.x += rnd(-15, 15);
+        attack.y += rnd(-25, 25);
+
+        let angle = target ? angleBetween(this, target) : atan2(0, this.facing);
+        let dist = min(10, target ? distance(this, target) : 99);
+        this.x += dist * cos(angle);
+        this.y += max(0, dist * sin(angle));
+    }
+
+    damage() {
+        firstItem(this.world.category('camera')).shake(0.1, 10);
+        zzfx(...[1.1,,339,,.01,.05,1,2.4,-6,2,,,.09,1.1,,.5,,.67,.1]); // Hit 222
+
+        this.lastDamage = this.age;
+
+        let particleCount = 10;
+        if (++this.damageTaken >= G.difficulty.maxDamageTaken) {
+            particleCount = 100;
+
+            this.world.removeEntity(this);
+            zzfx(...[2,,69,.02,.17,.55,4,3.3,2,,,,,1,,.1,.2,.4,.15]); // Explosion 128
+        }
+
+        fireworks(
+            this.world,
+            this,
+            particleCount,
+            this.radiusX,
+            this.radiusY,
+        );
+
+        this.world.addEntity(new Flash('#fff')).interp('alpha', 0.5, 0, 0.2);
+        // TODO maybe should clean up the flash? eh not much of a perf hit
+    }
+
+    jumpData() {
+        let jumpPower = min(1, this.jumpHoldTime / 0.1);
+        let jumpHeight = 25 + jumpPower * 150;
+        let peakY = this.jumpStartY - jumpHeight;
+
+        let riseDuration = 0.1 + jumpPower * 0.1;
+        let riseProgress = between(0, (this.age - this.jumpStartAge) / riseDuration, 1);
+
+        let isRising = riseProgress < 1;
+
+        let currentY = -easeOutSine(riseProgress) * jumpHeight + this.jumpStartY;
+
+        return { peakY, isRising, currentY, jumpAge: this.age - this.jumpStartAge };
+    }
+
+    render() {
+        ctx.translate(this.x, this.y);
+
+        ctx.scale(this.facing, 1);
+
+        ctx.rotate(this.viewAngle);
+
+        if (this.stickingToWall) ctx.translate(0, 10);
+
+        if (this.rolling) {
+            ctx.rotate(this.rollingAge * PI * 6);
+            ctx.scale(0.8, 0.8);
+        }
+
+        ctx.fillStyle = ctx.strokeStyle = this.age - this.lastDamage < 0.1 ? '#fff' : this.color;
+
+        // Body
+        ctx.wrap(() => {
+            ctx.lineWidth = 20;
+            ctx.lineJoin = /*nomangle*/'square'/*/nomangle*/;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(-40 / 2 + 20 / 2, 0);
+            let curveHeight = this.rolling
+                ? -10
+                : sin(this.age * PI * 2 * 4) * !!this.walking * 2;
+            ctx.bezierCurveTo(
+                0, curveHeight,
+                0, curveHeight,
+                40 / 2 - 20 / 2, 0,
+            );
+            ctx.stroke();
+
+            ctx.fillRect(-40 / 2, 0, 20 / 2, 20 / 2);
+            ctx.fillRect(40 / 2, 0, -20 / 2, 20 / 2);
+        });
+
+        let frontLegsBaseAngle = this.landed ? PI / 2 : 0;
+        let backLegsBaseAngle = this.landed ? PI / 2 : PI;
+
+        if (this.rolling) {
+            frontLegsBaseAngle += PI / 4;
+            backLegsBaseAngle -= PI / 4;
+        }
+
+        let legsWalkAngle = this.walking || (!this.landed && !this.stickingToWall)
+            ? sin(this.age * 3 * PI * 2) * PI / 4 * (this.stickingToWall ? 0.5 : 1)
+            : 0;
+
+        // Legs
+        let legSettings = [
+            [40 / 2 - 4 / 2, frontLegsBaseAngle + legsWalkAngle],
+            [40 / 2 - 4 / 2 - 5, frontLegsBaseAngle - legsWalkAngle],
+            [-40 / 2 + 4 / 2, backLegsBaseAngle - legsWalkAngle],
+            [-40 / 2 + 4 / 2 + 5, backLegsBaseAngle + legsWalkAngle],
+        ];
+        if (this.age - this.lastAttack < 0.2) {
+            let progress = (this.age - this.lastAttack) / 0.2;
+            let startAngle = -PI / 3;
+            let endAngle = PI / 2;
+            legSettings[0][1] = interpolate(startAngle, endAngle, progress);
+        }
+
+        for (let [x, angle] of legSettings) {
+            ctx.wrap(() => {
+                ctx.lineCap = 'round';
+                ctx.lineWidth = 4;
+
+                ctx.translate(x, 20 / 2 - 4 / 2);
+                ctx.rotate(angle);
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(15, 0);
+                ctx.stroke();
+            });
+        }
+
+        // Tail
+        ctx.wrap(() => {
+            if (this.rolling) {
+                ctx.translate(-40 / 2 + 5 / 2 + 4, 20 / 2 - 4);
+                ctx.rotate(PI / 2 - PI / 4);
+            } else {
+                ctx.translate(-40 / 2 + 5 / 2, -20 / 2);
+                ctx.rotate(-PI / 2 - PI / 4);
+            }
+
+            ctx.lineCap = 'round';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(-10, 0);
+            let phase = this.age * PI * (this.walking ? 5 : 0.5);
+            for (let x = 0 ; x < 30; x += 4) {
+                let amplitudeFactor = x / 30;
+                ctx.lineTo(x, sin(x / 30 * PI * 2 + phase) * 5 * amplitudeFactor);
+            }
+            ctx.stroke();
+        });
+
+        // Head
+        ctx.wrap(() => {
+            ctx.translate(40 / 2 - 5, 0);
+
+            ctx.rotate(-PI / 2);
+            if (this.rolling) ctx.rotate(PI - PI / 3);
+
+            ctx.translate(10, 0);
+            if (this.walking) ctx.rotate(sin(this.age * 3 * PI * 2) * PI / 16);
+            renderCatHead(this.age % 3 < 0.1);
+        });
+    }
+
+    renderDebug() {
+        if (!1) return;
+
+        if (0) {
+            ctx.wrap(() => this.attackHitbox.render());
+        }
+
+        super.renderDebug();
+
+        if (0) ctx.wrap(() => {
+            let { peakY } = this.jumpData();
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(this.x - 100, peakY, 200, 2);
+            ctx.fillRect(this.x - 100, this.jumpStartY, 200, 2);
+        });
+    }
+}
+
+renderCatHead = (blink) => {
+    ctx.fillRect(-20 / 2, -20 / 2, 20, 20);
+
+    // Eyes
+    if (!blink) ctx.wrap(() => {
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+
+        for (let scaleY of [-1, 1]) {
+            ctx.wrap(() => {
+                ctx.scale(1, scaleY);
+                ctx.moveTo(0, 3);
+                ctx.lineTo(0, 7);
+                ctx.lineTo(4, 7);
+                ctx.lineTo(2, 3);
+            });
+        }
+        ctx.fill();
+    });
+
+    // Ears
+    ctx.beginPath();
+    ctx.moveTo(20 / 2, -20 / 2);
+    ctx.lineTo(20 / 2 + 10, -20 / 2);
+    ctx.lineTo(20 / 2, -20 / 2 + 5);
+    ctx.lineTo(20 / 2, 20 / 2 - 5);
+    ctx.lineTo(20 / 2 + 10, 20 / 2);
+    ctx.lineTo(20 / 2, 20 / 2);
+    ctx.fill();
+
+    for (let scaleY of [-1, 1]) {
+        for (let angle of [0, PI / 16]) {
+            ctx.wrap(() => {
+                ctx.scale(1, scaleY);
+                ctx.rotate(angle);
+                ctx.lineWidth = 0.5;
+                ctx.globalAlpha = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(-5, 5);
+                ctx.lineTo(-5, 20);
+                ctx.stroke();
+            });
+        }
+    }
+}
+
+BACKGROUND_STRIPES = (() => {
+    let can = createCanvas(50 * 15, 50 * 30, (ctx, can) => {
+        ctx.fillStyle = '#000';
+
+        function dewIt() {
+            for (let y = 0 ; y <= can.height; y ++) {
+                let relY = y / can.height;
+                ctx.lineTo(
+                    interpolate(- 200, can.width - 200, relY) + sin(relY * TWO_PI * 30) * 8,
+                    interpolate(0, can.height, relY),
+                );
+            }
+        }
+
+        for (let i = -1 ; i <= 1; i++) {
+            ctx.wrap(() => {
+                ctx.translate(can.width * i, 0);
+                ctx.beginPath();
+                dewIt();
+                ctx.translate(can.width, can.height);
+                ctx.scale(-1, -1);
+                dewIt();
+                ctx.fill();
+            });
+        }
+    });
+
+    let patt = can.getContext('2d').createPattern(can, 'repeat');
+    patt.width = can.width;
+    patt.height = can.height;
+    return patt;
+})();
+
+class Structure extends Entity {
+
+    type = 'structure';
+    categories = ['structure'];
+    color = '#f00';
+    raycaster = new Raycaster(this);
+
+    z = 7;
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+        this.width = this.matrix[0].length * 50;
+        this.height = this.matrix.length * 50;
+    }
+
+    renderBackground() {
+        this.width = this.matrix[0].length * 50;
+        this.height = this.matrix.length * 50;
+
+        let camera = firstItem(this.world.category('camera'));
+
+        let minX = max(this.x, camera.actual.x - CANVAS_WIDTH / 2) + 50;
+        let minY = max(this.y, camera.actual.y - CANVAS_HEIGHT / 2) + 50;
+
+        let maxX = min(this.x + this.width, camera.actual.x + CANVAS_WIDTH / 2) - 50;
+        let maxY = min(this.y + this.height, camera.actual.y + CANVAS_HEIGHT / 2) - 50;
+
+        ctx.fillStyle = this.color;
+        ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+
+        ctx.globalAlpha = 0.05;
+        ctx.fillStyle = BACKGROUND_STRIPES;
+
+        let offsetY = this.age * 30;
+        let offsetX = offsetY * BACKGROUND_STRIPES.width / BACKGROUND_STRIPES.height;
+
+        ctx.translate(offsetX, offsetY);
+        ctx.fillRect(minX - offsetX, minY - offsetY, maxX - minX, maxY - minY);
+    }
+
+    render() {
+        if (!this.matrix) return;
+
+        let rows = this.matrix.length;
+        let cols = this.matrix[0].length;
+
+        this.prerendered = this.prerendered || createCanvas(this.width, this.height, (ctx, can) => {
+            // Cells
+            ctx.wrap(() => {
+                ctx.fillStyle = '#000';
+
+                for (let row = rows - 1 ; row >= 0 ; row--) {
+                    for (let col = 0 ; col < cols ; col++) {
+                        let cell = this.matrix[row][col];
+                        if (cell) {
+                            ctx.fillRect(
+                                col * 50,
+                                row * 50,
+                                50,
+                                cell === 1 ? 50 : 50 / 4
+                            );
+                        }
+                    }
+                }
+            });
+
+            ctx.globalAlpha = 0.2;
+            ctx.lineWidth = 2;
+
+            let shadowLength = 50;
+
+            let verticalGradient = ctx.createLinearGradient(
+                0, 0,
+                0, shadowLength,
+            );
+            verticalGradient.addColorStop(0, 'rgba(0,0,0,1)');
+            verticalGradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+            let horizontalGradient = ctx.createLinearGradient(
+                0, 0,
+                shadowLength, 0,
+            );
+            horizontalGradient.addColorStop(0, 'rgba(0,0,0,1)');
+            horizontalGradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+            for (let row = 0 ; row < rows; row++) {
+                for (let col = 0 ; col < cols; col++) {
+                    if (this.matrix[row][col] !== 1)  continue;
+
+                    let left = this.x + col * 50;
+                    let right = left + 50;
+
+                    let top = this.y + row * 50;
+                    let bottom = top + 50;
+
+                    if (this.matrix[row + 1]?.[col] !== 1) {
+                        ctx.wrap(() => {
+                            ctx.translate(left, bottom);
+
+                            ctx.fillStyle = verticalGradient;
+
+                            ctx.beginPath();
+                            ctx.moveTo(0, 0);
+                            ctx.lineTo(50, 0);
+                            ctx.lineTo(50 + shadowLength, shadowLength);
+                            ctx.lineTo(shadowLength, shadowLength);
+                            ctx.fill();
+                        });
+                    }
+
+                    if (this.matrix[row][col + 1] !== 1) {
+                        ctx.wrap(() => {
+                            ctx.translate(right, top);
+
+                            ctx.fillStyle = horizontalGradient;
+
+                            ctx.beginPath();
+                            ctx.moveTo(0, 0);
+                            ctx.lineTo(shadowLength, shadowLength);
+                            ctx.lineTo(shadowLength, 50 + shadowLength);
+                            ctx.lineTo(0, 50);
+                            ctx.fill();
+                        });
+                    }
+                }
+            }
+        });
+
+        ctx.drawImage(this.prerendered, this.x, this.y);
+
+        ctx.fillStyle = '#000';
+        ctx.fillRect(this.x, this.y, -CANVAS_WIDTH / 2, this.height);
+        ctx.fillRect(this.x + this.width, this.y, CANVAS_WIDTH  / 2, this.height);
+        ctx.fillRect(this.x - CANVAS_WIDTH / 2, this.y, CANVAS_WIDTH + this.width, -CANVAS_HEIGHT / 2);
+        ctx.fillRect(this.x - CANVAS_WIDTH / 2, this.y + this.height, CANVAS_WIDTH + this.width, this.height);
+    }
+
+    reposition(entity, radiusX, radiusY, previousX, previousY) {
+        let remainingIterations = 2;
+        while (remainingIterations-- > 0) {
+            let { x, y } = entity;
+            let leftX = entity.x - radiusX;
+            let rightX = entity.x + radiusX;
+            let topY = entity.y - radiusY;
+            let bottomY = entity.y + radiusY;
+
+            let top = this.cellAt(x, topY);
+            let right = this.cellAt(rightX, y) === 1;
+            let left = this.cellAt(leftX, y) === 1;
+            let bottom = this.cellAt(x, bottomY);
+
+            let topLeft = this.cellAt(leftX, topY) === 1;
+            let topRight = this.cellAt(rightX, topY) === 1;
+            let bottomLeft =  this.cellAt(leftX, bottomY) === 1;
+            let bottomRight =  this.cellAt(rightX, bottomY) === 1;
+
+            let directionY = sign(y - previousY);
+
+            let verticalCollisionCount = !!top + !!topLeft + !!topRight + !!bottom + !!bottomLeft + !!bottomRight;
+            let horizontalCollisionCount = !!left + !!topLeft + !!bottomLeft + !!right + !!topRight + !!bottomRight;
+
+            if (verticalCollisionCount + horizontalCollisionCount == 0) {
+                break;
+            }
+
+            let resolveVertical = () => {
+                if (top && top === 1) entity.y = ceilToNearest(topY, 50) + radiusY;
+                if (bottom && (bottom === 1 || directionY > 0)) entity.y = floorToNearest(bottomY, 50) - radiusY;
+            };
+
+            let resolveHorizontal = () => {
+                if (left) entity.x = ceilToNearest(leftX, 50) + radiusX;
+                if (right) entity.x = floorToNearest(rightX, 50) - radiusX;
+            };
+
+            if (remainingIterations == 0) {
+                resolveVertical();
+                resolveHorizontal();
+            } else if (verticalCollisionCount > 0) {
+                resolveVertical();
+            } else {
+                resolveHorizontal();
+            }
+        }
+    }
+
+    cellAt(x, y) {
+        let row = floor((y - this.y) / 50);
+        let col = floor((x - this.x) / 50);
+        if (!isBetween(0, row, this.matrix.length)) return 0;
+        if (!isBetween(0, col, this.matrix[0].length)) return 0
+
+        return this.matrix[row]?.[col] || 0;
+    }
+}
+
+class Particle extends Entity {
+
+    z = 5;
+    alpha = 1;
+    size = 1;
+
+    render() {
+        ctx.globalAlpha = this.alpha;
+        ctx.translate(this.x, this.y);
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+        ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+    }
+
+    animate(duration, values) {
+        let interps = [];
+        for (let [propertyKey, offset] of Object.entries(values)) {
+            interps.push(this.interp(propertyKey, this[propertyKey], this[propertyKey] + offset, duration));
+        }
+        return Promise.all(interps)
+            .then(() => this.world.removeEntity(this));
+    }
+}
+
+class PhysicalParticle extends Entity {
+
+    z = 5;
+    speed = rnd(200, 400);
+    angle = rnd(-PI, 0);
+
+    vX = cos(this.angle) * this.speed;
+    vY = sin(this.angle) * this.speed;
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        this.vY += elapsed * 800; // Gravity
+
+        this.x += this.vX * elapsed;
+        this.y += this.vY * elapsed;
+
+        let { x, y } = this;
+        for (let structure of this.world.category('structure')) {
+            structure.reposition(this, 2, 2);
+        }
+
+        if (x !== this.x) this.vX *= -0.5;
+        if (y !== this.y) {
+            this.vX *= 0.5;
+            this.vY *= -0.5;
+        }
+
+        if (this.age > 4 || pointDistance(0, 0, this.vX, this.vY) < 10) {
+            this.world.removeEntity(this);
+        }
+    }
+
+    render() {
+        let s = pointDistance(0, 0, this.vX, this.vY) / 25;
+        ctx.translate(this.x, this.y);
+        ctx.rotate(atan2(this.vY, this.vX) + PI);
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.fillRect(0, -2, s, 4);
+        ctx.strokeRect(0, -2, s, 4);
+    }
+}
+
+fireworks = (world, position, count, radiusX = 0, radiusY = 0) => {
+    for (let i = 0 ; i < count; i++) {
+        let particle = world.addEntity(new PhysicalParticle());
+        particle.x = position.x + rnd(-1, 1) * radiusX;
+        particle.y = position.y + rnd(-1, 1) * radiusY;
+    }
+}
+
+class Camera extends Entity {
+
+    zoom = 1.3;
+    categories = ['camera'];
+
+    get actual() {
+        let factor = (this.age < this.shakeEndAge) * (this.shakePower || 0);
+        this.cachedActual ||= {};
+        this.cachedActual.x = this.x + sin(this.age * TWO_PI * 10) * factor;
+        this.cachedActual.y = this.y + cos(this.age * TWO_PI * 15) * factor;
+        return this.cachedActual;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        this.hitbox.width = CANVAS_WIDTH / this.zoom;
+        this.hitbox.height = CANVAS_HEIGHT / this.zoom;
+
+        if (!this.target) return;
+
+        let dist = distance(this, this.target)
+        let angle = angleBetween(this, this.target);
+        let appliedDist = min(dist, dist * elapsed * 4);
+        this.x += appliedDist * cos(angle);
+        this.y += appliedDist * sin(angle) * 0.5;
+    }
+
+    shake(duration, shakePower) {
+        this.shakeEndAge = this.age + duration;
+        this.shakePower = shakePower;
+    }
+}
+
+renderArrow = () => {
+    ctx.beginPath();
+    ctx.moveTo(50 / 2, 0);
+    ctx.lineTo(-50 / 2, 50 / 2);
+    ctx.lineTo(-50 / 2, -50 / 2);
+    ctx.fill();
+}
+
+formatTime = x => {
+    return (~~(x / 60)).toString().padStart(2, '0') + ':' + (x % 60).toFixed(2).padStart(5, '0');
+};
+
+class HUD extends Entity {
+
+    alpha = 1;
+    z = 10;
+    categories = ['hud'];
+
+    constructor(cat) {
+        super();
+        this.cat = cat;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        let humanCount = this.world.category('human').size;
+        this.maxHumanCount = max(this.maxHumanCount || 0, humanCount);
+    }
+
+    render() {
+        this.cancelCamera();
+
+        ctx.globalAlpha = this.alpha;
+
+        ctx.strokeStyle = '#000';
+        ctx.fillStyle = '#fff';
+        ctx.lineWidth = 10;
+
+        ctx.wrap(() => {
+            let camera = firstItem(this.world.category('camera'));
+            if (camera.zoom >= 2) return;
+
+            ctx.textAlign = /*nomangle*/'left'/*/nomangle*/;
+            ctx.textBaseline = /*nomangle*/'top'/*/nomangle*/;
+            ctx.lineWidth = 1;
+
+            ctx.translate(50, 50);
+
+            for (let [label, value] of [
+                [/*nomangle*/'LEVEL'/*/nomangle*/, (G.runLevelIndex) + '/' + (ALL_LEVELS.length - 1)],
+                [/*nomangle*/'TIME'/*/nomangle*/, formatTime(G.runTime)],
+                [/*nomangle*/'BEST'/*/nomangle*/, formatTime(G.bestRunTime)],
+                [/*nomangle*/'DEATHS'/*/nomangle*/, G.runDeaths],
+                [/*nomangle*/'DIFFICULTY [K]'/*/nomangle*/, G.difficulty.label],
+            ]) {
+                ctx.font = /*nomangle*/'italic bold 16px Impact'/*/nomangle*/;
+                ctx.drawCommandText(label);
+                ctx.translate(0, 20);
+
+                ctx.font = /*nomangle*/'italic bold 36px Impact'/*/nomangle*/;
+                ctx.fillText(value, 0, 0);
+                ctx.strokeText(value, 0, 0);
+                ctx.translate(0, 50);
+            }
+        });
+
+        if (inputMode == 1) ctx.wrap(() => {
+            ctx.strokeStyle = '#fff';
+
+            ctx.wrap(() => {
+                ctx.globalAlpha = downKeys[37] ? 1 : 0.5;
+                ctx.translate(CANVAS_WIDTH / 8, CANVAS_HEIGHT - 100);
+                ctx.scale(-1, 1);
+                renderArrow();
+            });
+
+            ctx.wrap(() => {
+                ctx.globalAlpha = downKeys[39] ? 1 : 0.5;
+                ctx.translate(CANVAS_WIDTH * 3 / 8, CANVAS_HEIGHT - 100);
+                renderArrow();
+            });
+
+            ctx.wrap(() => {
+                ctx.globalAlpha = downKeys[40] ? 1 : 0.5;
+
+                ctx.translate(CANVAS_WIDTH * 5 / 8, CANVAS_HEIGHT - 100);
+
+                let radius = 50 / 2;
+
+                for (let i = 0 ; i < 2 ; i++) {
+                    ctx.rotate(PI);
+
+                    ctx.beginPath();
+                    ctx.arc(0, 0, radius, PI / 4, PI);
+                    ctx.stroke();
+                }
+            });
+
+            ctx.wrap(() => {
+                ctx.globalAlpha = downKeys[38] ? 1 : 0.5;
+                ctx.translate(CANVAS_WIDTH * 7 / 8, CANVAS_HEIGHT - 100);
+                ctx.rotate(-PI / 2);
+                renderArrow();
+            });
+
+            ctx.wrap(() => {
+                ctx.globalAlpha = downKeys[32] ? 1 : 0.5;
+
+                this.claw ||= new ClawEffect();
+                this.claw.age = 0.5;
+                this.claw.scale = 3;
+                this.claw.angle = PI / 4;
+                this.claw.x = CANVAS_WIDTH * 7 / 8;
+                this.claw.y = CANVAS_HEIGHT - 375;
+                this.claw.stroke = 0;
+                this.claw.render();
+            });
+
+            ctx.wrap(() => {
+                ctx.globalAlpha = downKeys[69] ? 1 : 0.5;
+
+                ctx.translate(CANVAS_WIDTH * 7 / 8, CANVAS_HEIGHT - 625);
+                ctx.rotate(-PI / 2);
+                ctx.scale(2, 2);
+                renderCatHead(1);
+            });
+        });
+    }
+}
+
+class Spikes extends Entity {
+
+    type = 'spikes';
+
+    angle = 0;
+    length = 50;
+
+    z = 2;
+
+    get hitbox() {
+        let hitbox = super.hitbox;
+        hitbox.width = max(20, abs(cos(this.angle)) * this.length);
+        hitbox.height = max(20, abs(sin(this.angle)) * this.length);
+        return hitbox;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        for (let target of this.targets()) {
+            if (target.hitbox.intersects(this.hitbox)) target.damage();
+        }
+    }
+
+    * targets() {
+        yield* this.world.category('cat');
+        yield* this.world.category('human');
+    }
+
+    render() {
+        ctx.fillStyle = '#000';
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        ctx.wrap(() => {
+            ctx.translate(-this.length / 2, 1);
+
+            ctx.beginPath();
+            for (let x = 0 ; x < this.length; x += 10) {
+                ctx.lineTo(x, 0);
+                ctx.lineTo(x + 5, -20);
+                ctx.lineTo(x + 10, 0);
+            }
+            ctx.fill();
+        });
+    }
+}
+
+class Water extends Entity {
+
+    z = 6;
+
+    type = 'water';
+
+    length = 50;
+    depth = 50;
+
+    get hitbox() {
+        let hitbox = super.hitbox;
+        hitbox.width = this.length;
+        hitbox.height = this.depth;
+        return hitbox;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        for (let target of this.targets()) {
+            if (target.hitbox.intersects(this.hitbox)) target.damage();
+        }
+    }
+
+    * targets() {
+        yield* this.world.category('cat');
+        yield* this.world.category('human');
+    }
+
+    render() {
+        ctx.fillStyle = '#0ff';
+        ctx.translate(this.x - this.length / 2, this.y - this.depth / 2);
+
+        ctx.globalAlpha = 0.5;
+
+        let speed = 10;
+        for (let offset of [-20, -10, 0]) {
+            ctx.wrap(() => {
+                ctx.beginPath();
+                for (let x = 0 ; x <= this.length; x += 2) {
+                    ctx.lineTo(
+                        x,
+                        sin((x - this.age * speed) * TWO_PI / 20) * 2 + offset
+                    );
+                }
+                ctx.lineTo(this.length, this.depth);
+                ctx.lineTo(0, this.depth);
+                ctx.fill();
+
+                speed *= 1.5;
+            });
+        }
+    }
+}
+
+class Label extends Entity {
+    type = 'text';
+    z = 0;
+    visibleStartAge = 0;
+
+    constructor(text = '') {
+        super();
+        this.text = text;
+
+        if (1) {
+            this.hitbox.width = 25;
+            this.hitbox.height = 25;
+        }
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        if (this.visibleStartAge) return;
+        for (let camera of this.world.category('camera')) {
+            if (camera.zoom <= 1.5 && abs(this.x - camera.x) < 50 * 8 && abs(this.y - camera.y) < 50 * 8) {
+                this.visibleStartAge = this.age;
+            }
+        }
+    }
+
+    render() {
+        if (!this.visibleStartAge && !(1 && this.world.editorMode)) return;
+
+        ctx.translate(this.x, this.y);
+
+        let animationRatio = 1 && this.world.editorMode
+            ? 1
+            : between(0, (this.age - this.visibleStartAge) / 0.3, 1);
+
+        ctx.globalAlpha = interpolate(0, 0.9, animationRatio);
+        ctx.translate(0, interpolate(20, 0, animationRatio));
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 40px Impact';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 4;
+        ctx.drawCommandText(this.text);
+    }
+}
+
+class Interpolator extends Entity {
+
+    constructor(
+        object,
+        property,
+        fromValue,
+        toValue,
+        duration,
+        easing = linear,
+    ) {
+        super();
+        this.object = object;
+        this.property = property;
+        this.fromValue = fromValue;
+        this.toValue = toValue;
+        this.duration = duration;
+        this.easing = easing;
+
+        this.cycle(0);
+    }
+
+    awaitCompletion() {
+        return new Promise(resolve => this.resolve = resolve);
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        let progress = this.age / this.duration;
+
+        this.object[this.property] = interpolate(this.fromValue, this.toValue, this.easing(progress));
+
+        if (progress > 1) {
+            this.world.removeEntity(this);
+            this.resolve?.();
+        }
+    }
+}
+
+class Screen {
+    age = 0;
+    commands = [];
+    songVolume = 1;
+
+    constructor() {
+        if (1) {
+            this.debugValues = () => ([]);
+        }
+    }
+
+    addCommand(label, detect, action, playSound = 1) {
+        this.commands.push({ label, detect, action, playSound });
+    }
+
+    addDifficultyChangeCommand() {
+        this.addCommand(
+            () => /*nomangle*/'PRESS [K] TO SET DIFFICULTY '/*/nomangle*/ + '(' + G.difficulty.label + ')',
+            () => downKeys[75],
+            () => {
+                let currentIndex = DIFFICULTIES.indexOf(G.difficulty);
+                if (currentIndex >= 0) G.difficulty = DIFFICULTIES[(currentIndex + 1) % DIFFICULTIES.length];
+            }
+        );
+    }
+
+    addMainMenuCommand() {
+        this.addCommand(
+            /*nomangle*/'PRESS [M] TO RETURN TO MAIN MENU'/*/nomangle*/,
+            () => downKeys[77],
+            () => G.startNavigation(),
+        );
+    }
+
+    pop() {
+        let index = G.screens.indexOf(this);
+        if (index >= 0) G.screens.splice(index, 9);
+    }
+
+    resolve() {
+        let { resolvers } = this;
+        if (!resolvers) return;
+        this.resolvers = 0;
+        this.pop();
+        resolvers.resolve();
+    }
+
+    reject(popScreen) {
+        let { resolvers } = this;
+        if (!resolvers) return;
+        this.resolvers = 0;
+        if (popScreen) this.pop();
+        resolvers.reject();
+    }
+
+    awaitCompletion() {
+        return new Promise((resolve, reject) => {
+            this.resolvers = { resolve, reject };
+        });
+    }
+
+    cycle(elapsed) {
+        this.age += elapsed;
+
+        if (Object.values(downKeys).filter(x => x).length == 0 && !TOUCH_DOWN) {
+            this.releasedCommand = 1;
+        }
+
+        if (this.releasedCommand && this.isForeground()) {
+            for (let { detect, action, playSound } of this.commands) {
+                if (detect?.()) {
+                    if (playSound) zzfx(...[.5,,500,,.02,.14,,3.2,,,325,.05,.03,,,,,.79,.04,,-1129]); // Pickup 819
+                    this.releasedCommand = 0;
+                    action();
+                }
+            }
+        }
+
+        if (this.isForeground()) {
+            setSongVolume(this.songVolume * (document.hasFocus() ? 1 : 0));
+        }
+    }
+
+    render() {
+
+    }
+
+    isForeground() {
+        return G?.screens?.[G.screens.length - 1] === this;
+    }
+}
+
+class TransitionScreen extends Screen {
+
+    constructor(from, to) {
+        super();
+        this.from = from;
+        this.to = to;
+    }
+
+    get progress() {
+        return this.age / 0.2;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+        if (this.progress >= 1) {
+            this.resolve();
+        }
+    }
+
+    render() {
+        ctx.translate(interpolate(this.from, this.to, this.progress) * (CANVAS_WIDTH + 200), 0);
+
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.fillRect(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, 20, 20);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(CANVAS_WIDTH + 200, 0);
+        ctx.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.lineTo(-200, CANVAS_HEIGHT);
+        ctx.fill();
+    }
+}
+
+class WorldScreen extends Screen {
+    absorb = 1;
+
+    constructor(serializedWorld) {
+        super();
+
+        this.serializedWorld = serializedWorld;
+
+        if (1) {
+            this.debugValues = () => {
+                let vals = [`Entities: ${this.world.entities.length}`];
+                for (let camera of this.world.category('camera')) {
+                    vals.push([`Camera: ${camera.x.toFixed(0)},${camera.y.toFixed(0)}`]);
+                }
+                for (let cat of this.world.category('cat')) {
+                    vals.push([`Cat: ${cat.x.toFixed(0)},${cat.y.toFixed(0)}`]);
+                }
+                return vals;
+            };
+        }
+
+        this.world = deserializeWorld(this.serializedWorld);
+
+        let camera = this.world.addEntity(new Camera());
+        let cat = firstItem(this.world.category('cat'));
+        if (cat) {
+            this.world.addEntity(new HUD(cat));
+
+            camera.target = cat;
+            camera.x = cat.x;
+            camera.y = cat.y - 200;
+        }
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        let remaining = elapsed;
+        while (remaining > 0) {
+            let advance = min(remaining, 1 / 120);
+            remaining -= advance;
+            this.world.cycle(advance);
+        }
+    }
+
+    render() {
+        super.render();
+        ctx.wrap(() => this.world.render());
+    }
+}
+
+class GameplayScreen extends WorldScreen {
+    constructor(level) {
+        super(level);
+
+        this.addDifficultyChangeCommand();
+    }
+
+    cycle(elapsed) {
+        let enemyCountBefore = this.world.category('human').size;
+        let catCountBefore = this.world.category('cat').size;
+
+        elapsed *= this.timeFactor || 1;
+
+        super.cycle(elapsed);
+
+        if (G && catCountBefore >= 1) G.runTime += elapsed;
+
+        this.released ||= !downKeys[27];
+        if (this.isForeground() && this.released && downKeys[27]) {
+            this.released = 0;
+            G.navigate(new PauseScreen()).awaitCompletion();
+        }
+
+        let hud = firstItem(this.world.category('hud'));
+        if (hud) hud.alpha = this.isForeground() ? 1 : 0.25;
+
+        if (this.isForeground()) {
+            // Level complete check
+            let enemyCountAfter = this.world.category('human').size;
+            if (enemyCountBefore && !enemyCountAfter) {
+                let camera = firstItem(this.world.category('camera'));
+
+                this.timeFactor = 0.25;
+
+                (async () => {
+                    await camera.interp('zoom', camera.zoom, 2, 0.5);
+                    this.resolve();
+                })();
+            }
+
+            if (catCountBefore && !this.world.category('cat').size) {
+                this.reject(0);
+            }
+        }
+    }
+}
+
+class StoryScreen extends WorldScreen {
+    constructor() {
+        super(INTRO_LEVEL);
+
+        let camera = firstItem(this.world.category('camera'));
+        camera.x = 50 * 6;
+        camera.y = 50 * 2;
+        camera.zoom = 3;
+    }
+
+    async fadeIn() {
+        this.cycle(0.2);
+        let fadeIn = this.world.addEntity(new Flash('#000'));
+        await fadeIn.interp('alpha', 1, 0, 1);
+    }
+
+    removeAllEntities() {
+        for (let entity of this.world.entities.slice()) {
+            if (!(entity instanceof Camera)) this.world.removeEntity(entity);
+        }
+        this.render();
+    }
+
+    async finalize(message) {
+        let camera = firstItem(this.world.category('camera'));
+        this.removeAllEntities();
+
+        if (inputMode == 1) camera.zoom = 1.3;
+
+        let label = this.world.addEntity(new Label(message));
+        label.x = camera.x;
+        label.y = camera.y;
+        label.visibleStartAge = 0.01;
+
+        await label.interp('_', 0, 0, 2);
+        this.resolve();
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+        for (let cat of this.world.category('cat')) {
+            cat.color = '#fff';
+        }
+        for (let human of this.world.category('human')) {
+            human.color = '#fff';
+        }
+        for (let structure of this.world.category('structure')) {
+            structure.color = '#000';
+        }
+    }
+
+    makeHarmless(human) {
+        human.seesCat = 0;
+        human.lastSeenCat = -9;
+        human.walking = 0;
+        human.facing = human.walkingDirection = 1;
+        human.lastDamage = human.age - 0.2;
+        human.aim = PI / 2 + PI / 8;
+        human.lastDamage = this.enemy.age - 0.2;
+    }
+}
+
+class IntroScreen extends StoryScreen {
+    constructor() {
+        super();
+
+        this.owner = this.world.addEntity(new Human());
+        this.owner.x = 50 * 4;
+
+        this.enemy = this.world.addEntity(new Human());
+        this.enemy.x = 50 * 8;
+
+        this.owner.color = this.enemy.color = '#fff';
+        this.owner.y = this.enemy.y = 50 * 2;
+        this.owner.health = 1;
+
+        this.addCommand(
+            '',
+            () => downKeys[13],
+            () => this.resolve(),
+        );
+
+        (async () => {
+            await this.fadeIn();
+
+            // Shoot and wait for the owner to take damage
+            this.enemy.shoot();
+            while (this.owner.health) await this.enemy.interp('_', 0, 0, 0);
+            this.removeAllEntities();
+
+            await this.world.addEntity(new Flash('#fff')).interp('alpha', 1, 0, 2);
+
+            await this.finalize(/*nomangle*/'AVENGE YOUR HOOMAN'/*/nomangle*/);
+        })();
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed * (this.world.category('bullet').size ? 0.1 : 1));
+
+        this.makeHarmless(this.owner);
+        this.makeHarmless(this.enemy);
+
+        this.enemy.facing = -1;
+        this.enemy.aim = angleBetween(this.enemy, this.owner);
+    }
+
+    render() {
+        ctx.wrap(() => super.render());
+        ctx.wrap(() => {
+            ctx.fillStyle = '#fff';
+            ctx.font = /*nomangle*/'bold 32px Impact'/*/nomangle*/;
+            ctx.textAlign = /*nomangle*/'right'/*/nomangle*/;
+            ctx.textBaseline = /*nomangle*/'bottom'/*/nomangle*/;
+
+            ctx.translate(CANVAS_WIDTH - 20, CANVAS_HEIGHT - 20);
+            ctx.drawCommandText(/*nomangle*/'[ENTER] SKIP'/*/nomangle*/);
+        });
+    }
+}
+
+class RevengeScreen extends StoryScreen {
+    constructor() {
+        super();
+
+        this.cat = this.world.addEntity(new Cat());
+        this.cat.x = 50 * 4;
+
+        this.enemy = this.world.addEntity(new Human());
+        this.enemy.x = 50 * 8;
+
+        this.cat.color = this.enemy.color = '#fff';
+        this.cat.y = this.enemy.y = 50 * 2;
+
+        this.world.addEntity(new HUD(this.cat));
+
+        (async () => {
+            await this.fadeIn();
+
+            let label = this.world.addEntity(new Label(/*nomangle*/'COMPLETE YOUR VENGEANCE'/*/nomangle*/));
+            label.x = 50 * 6;
+            label.y = 50 / 2;
+            label.z = 99;
+            label.visibleStartAge = 0.1;
+
+            while (this.enemy.health) await this.enemy.interp('_', 0, 0, 0);
+            await this.world.addEntity(new Flash('#000')).interp('alpha', 0, 1, 0.4);
+
+            this.enemy.health = 1;
+            this.finalize(/*nomangle*/'VENGEANCE COMPLETE'/*/nomangle*/);
+        })();
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed * (this.enemy.health ? 1 : 0.1));
+        this.makeHarmless(this.enemy);
+    }
+}
+
+class MenuScreen extends Screen {
+
+    render() {
+        ctx.wrap(() => this.renderTitle());
+        ctx.wrap(() => this.renderCommands());
+    }
+
+    renderTitle() {
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 160px Impact';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 20;
+        ctx.strokeText(this.title, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+        ctx.fillText(this.title, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+    }
+
+    renderCommands() {
+        ctx.translate(CANVAS_WIDTH / 2,  CANVAS_HEIGHT * 2 / 3 + 60 - ((this.commands.length - 1) * 50) / 2);
+
+        for (let { label, detect } of this.commands) {
+            if (this.age % 2 < 1.5 || !detect) ctx.wrap(() => this.renderCommandText(label.call ? label() : label));
+            ctx.translate(0, 50);
+        }
+    }
+
+    renderCommandText(line) {
+        ctx.font = /*nomangle*/'36px Impact'/*/nomangle*/;
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.textBaseline = /*nomangle*/'middle'/*/nomangle*/;
+        ctx.lineWidth = 5;
+        ctx.textAlign = /*nomangle*/'center'/*/nomangle*/;
+        ctx.letterSpacing = /*nomangle*/'0.1em'/*/nomangle*/;
+
+        ctx.drawCommandText(line);
+    }
+}
+
+class MainMenuScreen extends MenuScreen {
+
+    title = document.title;
+
+    constructor(worldScreen) {
+        super();
+
+        this.worldScreen = worldScreen;
+
+        this.addCommand(
+            inputMode == 0
+                ? /*nomangle*/'PRESS [SPACE] TO START'/*/nomangle*/
+                : /*nomangle*/'[TAP] TO START'/*/nomangle*/,
+            () => downKeys[32] || TOUCH_DOWN,
+            () => this.startGame(),
+            0,
+        );
+
+        if (inputMode == 0) {
+            if (G.bestRunTime) {
+                this.addCommand(
+                    /*nomangle*/'PRESS [9] TO START 9 LIVES MODE'/*/nomangle*/,
+                    () => downKeys[57],
+                    () => {
+                        G.difficulty = DIFFICULTY_NINE_LIVES;
+                        this.startGame();
+                    },
+                );
+            }
+            this.addDifficultyChangeCommand();
+        }
+
+        if (1) {
+            this.addCommand(
+                /*nomangle*/'PRESS [E] TO ENTER LEVEL EDITOR'/*/nomangle*/,
+                () => downKeys[69], // nice
+                () => G.navigate(new LevelEditorScreen(ALL_LEVELS[0]), 1),
+            );
+        }
+
+        let { world } = worldScreen;
+
+        let cat = firstItem(worldScreen.world.category('cat'));
+        let camera = firstItem(worldScreen.world.category('camera'));
+        camera.zoom = 3;
+        camera.target = new Entity();
+        camera.x = camera.target.x = cat.x;
+        camera.y = camera.target.y = cat.y - 20;
+
+        for (let hud of world.category('hud')) {
+            world.removeEntity(hud);
+        }
+
+        worldScreen.cycle(2);
+
+        (async () => {
+            let flash = world.addEntity(new Flash('#000'));
+
+            await flash.interp('', 0, 0, 0.3);
+
+            for (let angle of [PI / 8, PI * 3 / 4, PI / 4]) {
+                camera.shake(0.1, 5);
+
+                let claw = world.addEntity(new ClawEffect());
+                claw.x = camera.target.x;
+                claw.y = camera.target.y;
+                claw.angle = angle;
+                claw.scale = 5;
+
+                await flash.interp('_', 0, 0, 0.3);
+            }
+
+            await flash.interp('_', 0, 0, 0.5);
+            await flash.interp('alpha', 1, 0, 1);
+        })();
+    }
+
+    startGame() {
+        // TODO fade out instead
+        G.screens.pop();
+
+        playSong();
+
+        let { world } = this.worldScreen;
+        let cat = firstItem(world.category('cat'));
+        let camera = firstItem(world.category('camera'));
+        camera.target = cat;
+
+        (async () => {
+            await camera.interp('zoom', camera.zoom, 1.3, 2, easeInQuad);
+            world.addEntity(new HUD(cat));
+        })();
+
+        G.runTime = 0;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        // Only allow space bar
+        downKeys = {32: downKeys[32]};
+    }
+
+    renderTitle() {
+        ctx.wrap(() => {
+            this.claw ||= (() => {
+                let claw = new ClawEffect();
+                claw.x = CANVAS_WIDTH / 2;
+                claw.y = CANVAS_HEIGHT / 3 - 20;
+                claw.age = 0.5;
+                claw.angle = -PI / 6;
+                claw.scale = 12;
+                claw.color = '#f00';
+                return claw;
+            })();
+            this.claw.render();
+        });
+        super.renderTitle();
+    }
+
+    render() {
+        ctx.globalAlpha = interpolate(0, 1, min(this.age - 2.1) / 0.3);
+        super.render();
+    }
+}
+
+class PauseScreen extends MenuScreen {
+
+    title = /*nomangle*/'PAUSED'/*/nomangle*/;
+    songVolume = 0.2;
+    absorb = 1;
+
+    constructor() {
+        super();
+        this.addCommand(
+            /*nomangle*/'PRESS [ESC] TO RESUME'/*/nomangle*/,
+            () => downKeys[27],
+            () => this.resolve(),
+        );
+        this.addDifficultyChangeCommand();
+        this.addMainMenuCommand();
+    }
+}
+
+class GameOverScreen extends MenuScreen {
+    title = G.difficulty.maxDeaths < 999
+        ? (G.difficulty.maxDeaths - G.runDeaths) + /*nomangle*/' LIVES LEFT'/*/nomangle*/
+        : /*nomangle*/'CAT-ASTROPHE!'/*/nomangle*/;
+
+    constructor() {
+        super();
+        this.addCommand(
+            (inputMode == 1 ? /*nomangle*/'[TAP]'/*/nomangle*/ : /*nomangle*/'PRESS [R]'/*/nomangle*/) + /*nomangle*/' TO TRY AGAIN'/*/nomangle*/,
+            () => downKeys[82] || TOUCH_DOWN,
+            () => this.resolve(),
+        );
+        if (inputMode == 0) {
+            if (G.difficulty.maxDeaths == 999) {
+                this.addDifficultyChangeCommand();
+            }
+            this.addMainMenuCommand();
+        }
+    }
+}
+
+class FullGameOverScreen extends MenuScreen {
+
+    title = /*nomangle*/'9 LIVES, 0 LEFT'/*/nomangle*/;
+
+    constructor() {
+        super();
+        this.addCommand(
+            (inputMode == 1 ? /*nomangle*/'[TAP]'/*/nomangle*/ : /*nomangle*/'PRESS [SPACE]'/*/nomangle*/) + /*nomangle*/' TO GO BACK TO MAIN MENU'/*/nomangle*/,
+            () => downKeys[32] || TOUCH_DOWN,
+            () => this.resolve(),
+        );
+    }
+}
+
+class GameCompleteScreen extends MenuScreen {
+
+    title = /*nomangle*/'CONGRATULATIONS'/*/nomangle*/;
+
+    constructor(worldScreen) {
+        super();
+
+        this.worldScreen = worldScreen;
+
+        this.addCommand(/*nomangle*/'DIFFICULTY: '/*/nomangle*/ + G.difficulty.label);
+        this.addCommand(/*nomangle*/'DEATHS: '/*/nomangle*/ + G.runDeaths);
+        this.addCommand(/*nomangle*/'TIME: '/*/nomangle*/ + formatTime(G.runTime));
+        this.addCommand(/*nomangle*/'BEST TIME: '/*/nomangle*/ + formatTime(G.bestRunTime));
+        this.addCommand('');
+        this.addCommand('(9 LIVES MODE) UNLOCKED!');
+        this.addCommand('');
+        this.addCommand(
+            (inputMode == 1 ? /*nomangle*/'[TAP]'/*/nomangle*/ : /*nomangle*/'PRESS [SPACE]'/*/nomangle*/) + /*nomangle*/' TO DISMISS'/*/nomangle*/,
+            () => downKeys[32] || TOUCH_DOWN,
+            () => this.resolve(),
+        );
+
+        let { world } = worldScreen;
+
+        let camera = firstItem(worldScreen.world.category('camera'));
+        camera.target = new Entity();
+        camera.x = camera.target.x = 999;
+        camera.y = camera.target.y = 999;
+
+        for (let hud of world.category('hud')) {
+            world.removeEntity(hud);
+        }
+
+        (async () => {
+            while (1) {
+                fireworks(
+                    world,
+                    {
+                        x: camera.x + rnd(-CANVAS_WIDTH / 3, CANVAS_WIDTH / 3),
+                        y: camera.y + rnd(-CANVAS_HEIGHT / 4, 0),
+                    },
+                    50,
+                );
+
+                await camera.interp('', 0, 0, rnd(0.25, 0.5));
+            }
+        })();
+    }
+
+    render() {
+        ctx.globalAlpha = interpolate(0, 1, min(this.age - 1) / 0.3);
+        super.render();
+    }
+}
+
+DESERIALIZE_MAP = {};
+for (let type of [
+    Structure,
+    Cat,
+    Human,
+    Spikes,
+    Label,
+    Water,
+]) {
+    DESERIALIZE_MAP[(new type()).type] = type;
+}
+
+let serializedProperties = ['type', 'x', 'y', 'angle', 'matrix', 'length', 'text', 'color', 'depth'];
+
+if (1) {
+    serializeEntity = (entity) => {
+        if (!entity.type) return 0;
+
+        let out = {};
+        for (let key of serializedProperties) {
+            if (key in entity) out[key] = entity[key];
+        }
+        return out;
+    }
+}
+
+deserializeEntity = (levelData) => {
+    let entity = new (DESERIALIZE_MAP[levelData.type])();
+    for (let key in levelData) {
+        entity[key] = levelData[key];
+    }
+    return entity;
+};
+
+if (1) {
+    serializeWorld = (world) => {
+        let out = [];
+        for (let entity of world.entities) {
+            let serializedEntity = serializeEntity(entity);
+            if (serializedEntity) out.push(serializedEntity);
+        }
+        return out;
+    }
+}
+
+deserializeWorld = (levelData) => {
+    let world = new World();
+    for (let obj of levelData) {
+        world.addEntity(deserializeEntity(obj));
+    }
+    return world;
+}
+
+//
+// Sonant-X
+//
+// Copyright (c) 2014 Nicolas Vanhoren
+//
+// Sonant-X is a fork of js-sonant by Marcus Geelnard and Jake Taylor. It is
+// still published using the same license (zlib license, see below).
+//
+// Copyright (c) 2011 Marcus Geelnard
+// Copyright (c) 2008-2009 Jake Taylor
+//
+// This software is provided 'as-is', without any express or implied
+// warranty. In no event will the authors be held liable for any damages
+// arising from the use of this software.
+//
+// Permission is granted to anyone to use this software for any purpose,
+// including commercial applications, and to alter it and redistribute it
+// freely, subject to the following restrictions:
+//
+// 1. The origin of this software must not be misrepresented; you must not
+//    claim that you wrote the original software. If you use this software
+//    in a product, an acknowledgment in the product documentation would be
+//    appreciated but is not required.
+//
+// 2. Altered source versions must be plainly marked as such, and must not be
+//    misrepresented as being the original software.
+//
+// 3. This notice may not be removed or altered from any source
+//    distribution.
+
+
+let WAVE_SPS = 44100;                    // Samples per second
+let WAVE_CHAN = 2;                       // Channels
+let MAX_TIME = 33; // maximum time, in millis, that the generator can use consecutively
+
+let audioCtx;
+
+// Oscillators
+function osc_sin(value)
+{
+    return sin(value * 6.283184);
+}
+
+function osc_square(value) {
+    return osc_sin(value) < 0 ? -1 : 1;
+}
+
+function osc_saw(value)
+{
+    return (value % 1) - 0.5;
+}
+
+function osc_tri(value)
+{
+    let v2 = (value % 1) * 4;
+    return v2 < 2 ? v2 - 1 : 3 - v2;
+}
+
+// Array of oscillator functions
+let oscillators = [
+    osc_sin,
+    osc_square,
+    osc_saw,
+    osc_tri
+];
+
+function getnotefreq(n)
+{
+    return 0.00390625 * pow(1.059463094, n - 128);
+}
+
+function genBuffer(waveSize, callBack) {
+    setTimeout(() => {
+        // Create the channel work buffer
+        var buf = new Uint8Array(waveSize * WAVE_CHAN * 2);
+        var b = buf.length - 2;
+        var iterate = () => {
+            var begin = new Date();
+            var count = 0;
+            while(b >= 0)
+            {
+                buf[b] = 0;
+                buf[b + 1] = 128;
+                b -= 2;
+                count += 1;
+                if (count % 1000 === 0 && (new Date() - begin) > MAX_TIME) {
+                    setTimeout(iterate, 0);
+                    return;
+                }
+            }
+            setTimeout(() => callBack(buf), 0);
+        };
+        setTimeout(iterate, 0);
+    }, 0);
+}
+
+function applyDelay(chnBuf, waveSamples, instr, rowLen, callBack) {
+    let p1 = (instr.fx_delay_time * rowLen) >> 1;
+    let t1 = instr.fx_delay_amt / 255;
+
+    let n1 = 0;
+    let iterate = () => {
+        let beginning = new Date();
+        let count = 0;
+        while (n1 < waveSamples - p1) {
+            var b1 = 4 * n1;
+            var l = 4 * (n1 + p1);
+
+            // Left channel = left + right[-p1] * t1
+            var x1 = chnBuf[l] + (chnBuf[l+1] << 8) +
+                (chnBuf[b1+2] + (chnBuf[b1+3] << 8) - 32768) * t1;
+            chnBuf[l] = x1 & 255;
+            chnBuf[l+1] = (x1 >> 8) & 255;
+
+            // Right channel = right + left[-p1] * t1
+            x1 = chnBuf[l+2] + (chnBuf[l+3] << 8) +
+                (chnBuf[b1] + (chnBuf[b1+1] << 8) - 32768) * t1;
+            chnBuf[l+2] = x1 & 255;
+            chnBuf[l+3] = (x1 >> 8) & 255;
+            ++n1;
+            count += 1;
+            if (count % 1000 === 0 && (new Date() - beginning) > MAX_TIME) {
+                setTimeout(iterate, 0);
+                return;
+            }
+        }
+        setTimeout(callBack, 0);
+    };
+    setTimeout(iterate, 0);
+}
+
+class AudioGenerator {
+
+    constructor(mixBuf) {
+        this.mixBuf = mixBuf;
+        this.waveSize = mixBuf.length / WAVE_CHAN / 2;
+    }
+
+    getWave() {
+        let mixBuf = this.mixBuf;
+        let waveSize = this.waveSize;
+        // Local variables
+        let b, k, x, wave, l1, l2, y;
+
+        // Turn critical object properties into local variables (performance)
+        let waveBytes = waveSize * WAVE_CHAN * 2;
+
+        // Convert to a WAVE file (in a binary string)
+        l1 = waveBytes - 8;
+        l2 = l1 - 36;
+        wave = String.fromCharCode(82,73,70,70,
+                                   l1 & 255,(l1 >> 8) & 255,(l1 >> 16) & 255,(l1 >> 24) & 255,
+                                   87,65,86,69,102,109,116,32,16,0,0,0,1,0,2,0,
+                                   68,172,0,0,16,177,2,0,4,0,16,0,100,97,116,97,
+                                   l2 & 255,(l2 >> 8) & 255,(l2 >> 16) & 255,(l2 >> 24) & 255);
+        b = 0;
+        while (b < waveBytes) {
+            // This is a GC & speed trick: don't add one char at a time - batch up
+            // larger partial strings
+            x = "";
+            for (k = 0; k < 256 && b < waveBytes; ++k, b += 2)
+            {
+                // Note: We amplify and clamp here
+                y = 4 * (mixBuf[b] + (mixBuf[b+1] << 8) - 32768);
+                y = y < -32768 ? -32768 : (y > 32767 ? 32767 : y);
+                x += String.fromCharCode(y & 255, (y >> 8) & 255);
+            }
+            wave += x;
+        }
+        return wave;
+    }
+
+    getAudioBuffer(callBack) {
+        if (!audioCtx) {
+            audioCtx = new AudioContext();
+        }
+
+        let mixBuf = this.mixBuf;
+        let waveSize = this.waveSize;
+
+        let buffer = audioCtx.createBuffer(WAVE_CHAN, this.waveSize, WAVE_SPS); // Create Mono Source Buffer from Raw Binary
+        let lchan = buffer.getChannelData(0);
+        let rchan = buffer.getChannelData(1);
+        let b = 0;
+        let iterate = () => {
+            var beginning = new Date();
+            var count = 0;
+            while (b < waveSize) {
+                var y = 4 * (mixBuf[b * 4] + (mixBuf[(b * 4) + 1] << 8) - 32768);
+                y = y < -32768 ? -32768 : (y > 32767 ? 32767 : y);
+                lchan[b] = y / 32768;
+                y = 4 * (mixBuf[(b * 4) + 2] + (mixBuf[(b * 4) + 3] << 8) - 32768);
+                y = y < -32768 ? -32768 : (y > 32767 ? 32767 : y);
+                rchan[b] = y / 32768;
+                b += 1;
+                count += 1;
+                if (count % 1000 === 0 && new Date() - beginning > MAX_TIME) {
+                    setTimeout(iterate, 0);
+                    return;
+                }
+            }
+            setTimeout(() => callBack(buffer), 0);
+        };
+        setTimeout(iterate, 0);
+    }
+}
+
+class SoundGenerator {
+
+    constructor(instr, rowLen) {
+        this.instr = instr;
+        this.rowLen = rowLen || 5605;
+
+        this.osc_lfo = oscillators[instr.lfo_waveform];
+        this.osc1 = oscillators[instr.osc1_waveform];
+        this.osc2 = oscillators[instr.osc2_waveform];
+        this.attack = instr.env_attack;
+        this.sustain = instr.env_sustain;
+        this.release = instr.env_release;
+        this.panFreq = pow(2, instr.fx_pan_freq - 8) / this.rowLen;
+        this.lfoFreq = pow(2, instr.lfo_freq - 8) / this.rowLen;
+    }
+
+    genSound(n, chnBuf, currentpos) {
+        var c1 = 0;
+        var c2 = 0;
+
+        // Precalculate frequencues
+        var o1t = getnotefreq(n + (this.instr.osc1_oct - 8) * 12 + this.instr.osc1_det) * (1 + 0.0008 * this.instr.osc1_detune);
+        var o2t = getnotefreq(n + (this.instr.osc2_oct - 8) * 12 + this.instr.osc2_det) * (1 + 0.0008 * this.instr.osc2_detune);
+
+        // State variable init
+        var q = this.instr.fx_resonance / 255;
+        var low = 0;
+        var band = 0;
+        for (var j = this.attack + this.sustain + this.release - 1; j >= 0; --j)
+        {
+            let k = j + currentpos;
+
+            // LFO
+            let lfor = this.osc_lfo(k * this.lfoFreq) * this.instr.lfo_amt / 512 + 0.5;
+
+            // Envelope
+            let e = 1;
+            if (j < this.attack)
+                e = j / this.attack;
+            else if (j >= this.attack + this.sustain)
+                e -= (j - this.attack - this.sustain) / this.release;
+
+            // Oscillator 1
+            var t = o1t;
+            if (this.instr.lfo_osc1_freq) t += lfor;
+            if (this.instr.osc1_xenv) t *= e * e;
+            c1 += t;
+            var rsample = this.osc1(c1) * this.instr.osc1_vol;
+
+            // Oscillator 2
+            t = o2t;
+            if (this.instr.osc2_xenv) t *= e * e;
+            c2 += t;
+            rsample += this.osc2(c2) * this.instr.osc2_vol;
+
+            // Noise oscillator
+            if(this.instr.noise_fader) rsample += (2*random()-1) * this.instr.noise_fader * e;
+
+            rsample *= e / 255;
+
+            // State variable filter
+            var f = this.instr.fx_freq;
+            if(this.instr.lfo_fx_freq) f *= lfor;
+            f = 1.5 * sin(f * 3.141592 / WAVE_SPS);
+            low += f * band;
+            var high = q * (rsample - band) - low;
+            band += f * high;
+            switch(this.instr.fx_filter)
+            {
+                case 1: // Hipass
+                    rsample = high;
+                    break;
+                case 2: // Lopass
+                    rsample = low;
+                    break;
+                case 3: // Bandpass
+                    rsample = band;
+                    break;
+                case 4: // Notch
+                    rsample = low + high;
+                    break;
+                default:
+            }
+
+            // Panning & master volume
+            t = osc_sin(k * this.panFreq) * this.instr.fx_pan_amt / 512 + 0.5;
+            rsample *= 39 * this.instr.env_master;
+
+            // Add to 16-bit channel buffer
+            k = k * 4;
+            if (k + 3 < chnBuf.length) {
+                var x = chnBuf[k] + (chnBuf[k+1] << 8) + rsample * (1 - t);
+                chnBuf[k] = x & 255;
+                chnBuf[k+1] = (x >> 8) & 255;
+                x = chnBuf[k+2] + (chnBuf[k+3] << 8) + rsample * t;
+                chnBuf[k+2] = x & 255;
+                chnBuf[k+3] = (x >> 8) & 255;
+            }
+        }
+    }
+
+    createAudioBuffer(n, callBack) {
+        this.getAudioGenerator(n, ag => {
+            ag.getAudioBuffer(callBack);
+        });
+    }
+
+    getAudioGenerator(n, callBack) {
+        var bufferSize = (this.attack + this.sustain + this.release - 1) + (32 * this.rowLen);
+        var self = this;
+        genBuffer(bufferSize, buffer => {
+            self.genSound(n, buffer, 0);
+            applyDelay(buffer, bufferSize, self.instr, self.rowLen, function() {
+                callBack(new AudioGenerator(buffer));
+            });
+        });
+    }
+}
+
+class MusicGenerator {
+
+    constructor(song) {
+        this.song = song;
+        // Wave data configuration
+        this.waveSize = WAVE_SPS * song.songLen; // Total song size (in samples)
+    }
+
+    generateTrack(instr, mixBuf, callBack) {
+        genBuffer(this.waveSize, chnBuf => {
+            // Preload/precalc some properties/expressions (for improved performance)
+            var waveSamples = this.waveSize,
+                waveBytes = this.waveSize * WAVE_CHAN * 2,
+                rowLen = this.song.rowLen,
+                endPattern = this.song.endPattern,
+                soundGen = new SoundGenerator(instr, rowLen);
+
+            let currentpos = 0;
+            let p = 0;
+            let row = 0;
+            let recordSounds = () => {
+                var beginning = new Date();
+                while (1) {
+                    if (row === 32) {
+                        row = 0;
+                        p += 1;
+                        continue;
+                    }
+                    if (p === endPattern - 1) {
+                        setTimeout(delay, 0);
+                        return;
+                    }
+                    var cp = instr.p[p];
+                    if (cp) {
+                        var n = instr.c[cp - 1].n[row];
+                        if (n) {
+                            soundGen.genSound(n, chnBuf, currentpos);
+                        }
+                    }
+                    currentpos += rowLen;
+                    row += 1;
+                    if (new Date() - beginning > MAX_TIME) {
+                        setTimeout(recordSounds, 0);
+                        return;
+                    }
+                }
+            };
+
+            let delay = () => applyDelay(chnBuf, waveSamples, instr, rowLen, finalize);
+
+            var b2 = 0;
+            let finalize = () => {
+                let beginning = new Date();
+                let count = 0;
+
+                // Add to mix buffer
+                while(b2 < waveBytes) {
+                    var x2 = mixBuf[b2] + (mixBuf[b2+1] << 8) + chnBuf[b2] + (chnBuf[b2+1] << 8) - 32768;
+                    mixBuf[b2] = x2 & 255;
+                    mixBuf[b2+1] = (x2 >> 8) & 255;
+                    b2 += 2;
+                    count += 1;
+                    if (count % 1000 === 0 && (new Date() - beginning) > MAX_TIME) {
+                        setTimeout(finalize, 0);
+                        return;
+                    }
+                }
+                setTimeout(callBack, 0);
+            };
+            setTimeout(recordSounds, 0);
+        });
+    }
+
+    getAudioGenerator(callBack) {
+        genBuffer(this.waveSize, mixBuf => {
+            let t = 0;
+            let recu = () => {
+                if (t < this.song.songData.length) {
+                    t += 1;
+                    this.generateTrack(this.song.songData[t - 1], mixBuf, recu);
+                } else {
+                    callBack(new AudioGenerator(mixBuf));
+                }
+            };
+            recu();
+        });
+    }
+
+    createAudioBuffer(callBack) {
+        this.getAudioGenerator(ag => ag.getAudioBuffer(callBack));
+    }
+}
+
+// ZzFX - Zuper Zmall Zound Zynth - Micro Edition
+// MIT License - Copyright 2019 Frank Force
+// https://github.com/KilledByAPixel/ZzFX
+
+// This is a minified build of zzfx for use in size coding projects.
+// You can use zzfxV to set volume.
+// Feel free to minify it further for your own needs!
+
+// 'use strict';
+
+///////////////////////////////////////////////////////////////////////////////
+
+// ZzFXMicro - Zuper Zmall Zound Zynth - v1.3.1 by Frank Force
+
+// ==ClosureCompiler==
+// @compilation_level ADVANCED_OPTIMIZATIONS
+// @output_file_name ZzFXMicro.min.js
+// @js_externs zzfx, zzfxG, zzfxP, zzfxV, zzfxX
+// @language_out ECMASCRIPT_2019
+// ==/ClosureCompiler==
+
+let zzfx = (...z)=> zzfxP(zzfxG(...z)); // generate and play sound
+let zzfxV = .3;    // volume
+let zzfxR = 44100; // sample rate
+let zzfxX = new AudioContext; // audio context
+let zzfxP = (...samples)=>  // play samples
+{
+    // create buffer and source
+    let buffer = zzfxX.createBuffer(samples.length, samples[0].length, zzfxR),
+        source = zzfxX.createBufferSource();
+
+    // copy samples to buffer and play
+    samples.map((d,i)=> buffer.getChannelData(i).set(d));
+    source.buffer = buffer;
+    source.connect(zzfxX.destination);
+    source.start();
+    return source;
+}
+let zzfxG = // generate samples
+(
+    // parameters
+    volume = 1, randomness = .05, frequency = 220, attack = 0, sustain = 0,
+    release = .1, shape = 0, shapeCurve = 1, slide = 0, deltaSlide = 0,
+    pitchJump = 0, pitchJumpTime = 0, repeatTime = 0, noise = 0, modulation = 0,
+    bitCrush = 0, delay = 0, sustainVolume = 1, decay = 0, tremolo = 0, filter = 0
+)=>
+{
+    // init parameters
+    let PI2 = Math.PI*2, sign = v => v<0?-1:1,
+        startSlide = slide *= 500 * PI2 / zzfxR / zzfxR,
+        startFrequency = frequency *=
+            (1 + randomness*2*Math.random() - randomness) * PI2 / zzfxR,
+        b=[], t=0, tm=0, i=0, j=1, r=0, c=0, s=0, f, length,
+
+        // biquad LP/HP filter
+        quality = 2, w = PI2 * Math.abs(filter) * 2 / zzfxR,
+        cos = Math.cos(w), alpha = Math.sin(w) / 2 / quality,
+        a0 = 1 + alpha, a1 = -2*cos / a0, a2 = (1 - alpha) / a0,
+        b0 = (1 + sign(filter) * cos) / 2 / a0,
+        b1 = -(sign(filter) + cos) / a0, b2 = b0,
+        x2 = 0, x1 = 0, y2 = 0, y1 = 0;
+
+    // scale by sample rate
+    attack = attack * zzfxR + 9; // minimum attack to prevent pop
+    decay *= zzfxR;
+    sustain *= zzfxR;
+    release *= zzfxR;
+    delay *= zzfxR;
+    deltaSlide *= 500 * PI2 / zzfxR**3;
+    modulation *= PI2 / zzfxR;
+    pitchJump *= PI2 / zzfxR;
+    pitchJumpTime *= zzfxR;
+    repeatTime = repeatTime * zzfxR | 0;
+    volume *= zzfxV;
+
+    // generate waveform
+    for(length = attack + decay + sustain + release + delay | 0;
+        i < length; b[i++] = s * volume)               // sample
+    {
+        if (!(++c%(bitCrush*100|0)))                   // bit crush
+        {
+            s = shape? shape>1? shape>2? shape>3?      // wave shape
+                Math.sin(t**3) :                       // 4 noise
+                Math.max(Math.min(Math.tan(t),1),-1):  // 3 tan
+                1-(2*t/PI2%2+2)%2:                     // 2 saw
+                1-4*Math.abs(Math.round(t/PI2)-t/PI2): // 1 triangle
+                Math.sin(t);                           // 0 sin
+
+            s = (repeatTime ?
+                    1 - tremolo + tremolo*Math.sin(PI2*i/repeatTime) // tremolo
+                    : 1) *
+                sign(s)*(Math.abs(s)**shapeCurve) *      // curve
+                (i < attack ? i/attack :                 // attack
+                i < attack + decay ?                     // decay
+                1-((i-attack)/decay)*(1-sustainVolume) : // decay falloff
+                i < attack  + decay + sustain ?          // sustain
+                sustainVolume :                          // sustain volume
+                i < length - delay ?                     // release
+                (length - i - delay)/release *           // release falloff
+                sustainVolume :                          // release volume
+                0);                                      // post release
+
+            s = delay ? s/2 + (delay > i ? 0 :           // delay
+                (i<length-delay? 1 : (length-i)/delay) * // release delay
+                b[i-delay|0]/2/volume) : s;              // sample delay
+
+            if (filter)                                   // apply filter
+                s = y1 = b2*x2 + b1*(x2=x1) + b0*(x1=s) - a2*y2 - a1*(y2=y1);
+        }
+
+        f = (frequency += slide += deltaSlide) *// frequency
+            Math.cos(modulation*tm++);          // modulation
+        t += f + f*noise*Math.sin(i**5);        // noise
+
+        if (j && ++j > pitchJumpTime)           // pitch jump
+        {
+            frequency += pitchJump;             // apply pitch jump
+            startFrequency += pitchJump;        // also apply to start
+            j = 0;                              // stop pitch jump time
+        }
+
+        if (repeatTime && !(++r % repeatTime))  // repeat
+        {
+            frequency = startFrequency;         // reset frequency
+            slide = startSlide;                 // reset slide
+            j = j || 1;                         // reset pitch jump time
+        }
+    }
+
+    return b;
+}
+
+SONG = {
+  "rowLen": 5513,
+  "endPattern": 8,
+  "songData": [
+    {
+      "osc1_oct": 6,
+      "osc1_det": 0,
+      "osc1_detune": 0,
+      "osc1_xenv": 0,
+      "osc1_vol": 180,
+      "osc1_waveform": 0,
+      "osc2_oct": 7,
+      "osc2_det": 0,
+      "osc2_detune": 6,
+      "osc2_xenv": 0,
+      "osc2_vol": 60,
+      "osc2_waveform": 1,
+      "noise_fader": 220,
+      "env_attack": 10,
+      "env_sustain": 120,
+      "env_release": 300,
+      "env_master": 192,
+      "fx_filter": 2,
+      "fx_freq": 8000,
+      "fx_resonance": 120,
+      "fx_delay_time": 4,
+      "fx_delay_amt": 12,
+      "fx_pan_freq": 2,
+      "fx_pan_amt": 20,
+      "lfo_osc1_freq": 0,
+      "lfo_fx_freq": 0,
+      "lfo_freq": 0,
+      "lfo_amt": 0,
+      "lfo_waveform": 0,
+      "p": [
+        1,
+        2,
+        1,
+        3,
+        1,
+        2,
+        4,
+        3
+      ],
+      "c": [
+        {
+          "n": [
+            111,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            126,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            111,
+            0,
+            0,
+            0,
+            141,
+            0,
+            111,
+            0,
+            126,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            111,
+            0,
+            141,
+            0,
+            141,
+            0,
+            141,
+            0,
+            126,
+            0,
+            141,
+            0,
+            141,
+            0,
+            141,
+            0,
+            111,
+            0,
+            141,
+            0,
+            141,
+            0,
+            111,
+            0,
+            126,
+            0,
+            141,
+            0,
+            141,
+            0,
+            141,
+            0
+          ]
+        },
+        {
+          "n": [
+            111,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            126,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            111,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            126,
+            0,
+            126,
+            0,
+            126,
+            0,
+            126,
+            0
+          ]
+        },
+        {
+          "n": [
+            111,
+            0,
+            141,
+            0,
+            126,
+            0,
+            141,
+            0,
+            111,
+            0,
+            141,
+            0,
+            111,
+            0,
+            141,
+            0,
+            126,
+            0,
+            141,
+            0,
+            111,
+            0,
+            141,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "osc1_oct": 7,
+      "osc1_det": 0,
+      "osc1_detune": 7,
+      "osc1_xenv": 0,
+      "osc1_vol": 200,
+      "osc1_waveform": 2,
+      "osc2_oct": 7,
+      "osc2_det": 0,
+      "osc2_detune": 13,
+      "osc2_xenv": 0,
+      "osc2_vol": 180,
+      "osc2_waveform": 2,
+      "noise_fader": 0,
+      "env_attack": 50,
+      "env_sustain": 1100,
+      "env_release": 900,
+      "env_master": 191,
+      "fx_filter": 1,
+      "fx_freq": 1400,
+      "fx_resonance": 120,
+      "fx_delay_time": 6,
+      "fx_delay_amt": 90,
+      "fx_pan_freq": 4,
+      "fx_pan_amt": 100,
+      "lfo_osc1_freq": 0,
+      "lfo_fx_freq": 1,
+      "lfo_freq": 4,
+      "lfo_amt": 30,
+      "lfo_waveform": 0,
+      "p": [
+        1,
+        2,
+        3,
+        1,
+        2,
+        3,
+        4,
+        1
+      ],
+      "c": [
+        {
+          "n": [
+            151,
+            0,
+            0,
+            0,
+            154,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            151,
+            0,
+            0,
+            0,
+            154,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            151,
+            0,
+            153,
+            0,
+            154,
+            0,
+            156,
+            0,
+            154,
+            0,
+            153,
+            0,
+            151,
+            0,
+            149,
+            0,
+            151,
+            0,
+            0,
+            0,
+            154,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            0,
+            0,
+            151,
+            0,
+            0,
+            0,
+            154,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            151,
+            0,
+            0,
+            0,
+            154,
+            0,
+            158,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            151,
+            0,
+            154,
+            0,
+            158,
+            0,
+            161,
+            0,
+            159,
+            0,
+            158,
+            0,
+            156,
+            0,
+            154,
+            0,
+            153,
+            0,
+            151,
+            0,
+            149,
+            0,
+            146,
+            0,
+            144,
+            0,
+            0,
+            0,
+            146,
+            0,
+            147,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "osc1_oct": 7,
+      "osc1_det": 0,
+      "osc1_detune": 3,
+      "osc1_xenv": 0,
+      "osc1_vol": 180,
+      "osc1_waveform": 1,
+      "osc2_oct": 7,
+      "osc2_det": 0,
+      "osc2_detune": 9,
+      "osc2_xenv": 0,
+      "osc2_vol": 120,
+      "osc2_waveform": 1,
+      "noise_fader": 0,
+      "env_attack": 10,
+      "env_sustain": 380,
+      "env_release": 520,
+      "env_master": 185,
+      "fx_filter": 2,
+      "fx_freq": 2200,
+      "fx_resonance": 100,
+      "fx_delay_time": 6,
+      "fx_delay_amt": 120,
+      "fx_pan_freq": 6,
+      "fx_pan_amt": 120,
+      "lfo_osc1_freq": 0,
+      "lfo_fx_freq": 1,
+      "lfo_freq": 5,
+      "lfo_amt": 22,
+      "lfo_waveform": 0,
+      "p": [
+        1,
+        2,
+        1,
+        3,
+        2,
+        1,
+        4,
+        3
+      ],
+      "c": [
+        {
+          "n": [
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            151,
+            0,
+            0,
+            0,
+            142,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            151,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            142,
+            0,
+            0,
+            0,
+            144,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            144,
+            0,
+            0,
+            0,
+            142,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            139,
+            0,
+            0,
+            0,
+            137,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            0,
+            0,
+            139,
+            0,
+            0,
+            0,
+            142,
+            0,
+            146,
+            0,
+            0,
+            0,
+            144,
+            0,
+            0,
+            0,
+            0,
+            0,
+            142,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            139,
+            0,
+            0,
+            0,
+            142,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            147,
+            0,
+            146,
+            0,
+            144,
+            0,
+            142,
+            0,
+            141,
+            0,
+            139,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "osc1_oct": 6,
+      "osc1_det": 0,
+      "osc1_detune": 0,
+      "osc1_xenv": 0,
+      "osc1_vol": 200,
+      "osc1_waveform": 1,
+      "osc2_oct": 6,
+      "osc2_det": 0,
+      "osc2_detune": 4,
+      "osc2_xenv": 0,
+      "osc2_vol": 90,
+      "osc2_waveform": 0,
+      "noise_fader": 0,
+      "env_attack": 5,
+      "env_sustain": 700,
+      "env_release": 600,
+      "env_master": 192,
+      "fx_filter": 1,
+      "fx_freq": 600,
+      "fx_resonance": 90,
+      "fx_delay_time": 3,
+      "fx_delay_amt": 0,
+      "fx_pan_freq": 0,
+      "fx_pan_amt": 0,
+      "lfo_osc1_freq": 0,
+      "lfo_fx_freq": 0,
+      "lfo_freq": 4,
+      "lfo_amt": 9,
+      "lfo_waveform": 0,
+      "p": [
+        1,
+        2,
+        1,
+        3,
+        1,
+        2,
+        4,
+        1
+      ],
+      "c": [
+        {
+          "n": [
+            115,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0,
+            115,
+            0,
+            110,
+            0,
+            115,
+            0,
+            0,
+            0,
+            113,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            115,
+            0,
+            0,
+            0,
+            118,
+            0,
+            0,
+            0,
+            110,
+            0,
+            0,
+            0,
+            113,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0,
+            118,
+            0,
+            0,
+            0,
+            110,
+            0,
+            0,
+            0,
+            113,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            0,
+            0,
+            115,
+            0,
+            0,
+            0,
+            0,
+            0,
+            118,
+            0,
+            0,
+            0,
+            110,
+            0,
+            0,
+            0,
+            0,
+            0,
+            113,
+            0,
+            0,
+            0,
+            0,
+            0,
+            127,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            115,
+            0,
+            118,
+            0,
+            122,
+            0,
+            0,
+            0,
+            125,
+            0,
+            0,
+            0,
+            123,
+            0,
+            122,
+            0,
+            120,
+            0,
+            0,
+            0,
+            118,
+            0,
+            0,
+            0,
+            117,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "osc1_oct": 7,
+      "osc1_det": 0,
+      "osc1_detune": 0,
+      "osc1_xenv": 0,
+      "osc1_vol": 170,
+      "osc1_waveform": 2,
+      "osc2_oct": 7,
+      "osc2_det": 0,
+      "osc2_detune": 10,
+      "osc2_xenv": 0,
+      "osc2_vol": 150,
+      "osc2_waveform": 3,
+      "noise_fader": 40,
+      "env_attack": 5,
+      "env_sustain": 300,
+      "env_release": 900,
+      "env_master": 185,
+      "fx_filter": 2,
+      "fx_freq": 3500,
+      "fx_resonance": 110,
+      "fx_delay_time": 6,
+      "fx_delay_amt": 85,
+      "fx_pan_freq": 5,
+      "fx_pan_amt": 150,
+      "lfo_osc1_freq": 0,
+      "lfo_fx_freq": 1,
+      "lfo_freq": 4,
+      "lfo_amt": 28,
+      "lfo_waveform": 0,
+      "p": [
+        1,
+        2,
+        1,
+        3,
+        1,
+        2,
+        4,
+        1
+      ],
+      "c": [
+        {
+          "n": [
+            0,
+            0,
+            151,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            154,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            161,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            139,
+            0,
+            0,
+            0,
+            141,
+            0,
+            0,
+            0,
+            142,
+            0,
+            0,
+            0,
+            144,
+            0,
+            0,
+            0,
+            146,
+            0,
+            0,
+            0,
+            147,
+            0,
+            0,
+            0,
+            149,
+            0,
+            0,
+            0,
+            151,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "n": [
+            151,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            154,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            149,
+            0,
+            151,
+            0,
+            154,
+            0,
+            158,
+            0
+          ]
+        },
+        {
+          "n": [
+            163,
+            0,
+            161,
+            0,
+            159,
+            0,
+            158,
+            0,
+            156,
+            0,
+            154,
+            0,
+            153,
+            0,
+            151,
+            0,
+            149,
+            0,
+            147,
+            0,
+            146,
+            0,
+            144,
+            0,
+            142,
+            0,
+            141,
+            0,
+            139,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "songLen": 8
+}
+
+playSong = () => new MusicGenerator(SONG).createAudioBuffer(buffer => {
+    let source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = 1;
+
+    let gainNode = audioCtx.createGain();
+    gainNode.connect(audioCtx.destination);
+    source.connect(gainNode);
+    source./*nomangle*/start/*/nomangle*/();
+
+    playSong = () => 0;
+    setSongVolume = (x) => gainNode.gain.value = x * 0.5;
+    setSongVolume(1);
+});
+
+setSongVolume = () => 0;
+
+class World {
+
+    entities = [];
+    categories = {};
+
+    cycle(elapsed) {
+        for (let entity of this.entities.slice()) {
+            if (1 && this.editorMode && entity.type) continue;
+            entity.cycle(elapsed);
+        }
+    }
+
+    render() {
+        this.entities.sort((a, b) => a.z - b.z);
+
+        ctx.wrap(() => {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, can.width, can.height);
+
+            let camera = firstItem(this.category('camera'));
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(
+                CANVAS_WIDTH / 2 / camera.zoom - camera.actual.x,
+                CANVAS_HEIGHT / 2 / camera.zoom - camera.actual.y,
+            );
+
+            for (let entity of this.entities) {
+                ctx.wrap(() => entity.renderBackground());
+            }
+
+            for (let entity of this.entities) {
+                ctx.wrap(() => entity.render());
+            }
+
+            if (1) {
+                for (let entity of this.entities) {
+                    ctx.wrap(() => entity.renderDebug());
+                }
+            }
+        });
+    }
+
+    addEntity(entity) {
+        entity.world = this;
+        this.entities.push(entity);
+
+        for (let categoryId of entity.categories) {
+            this.categories[categoryId] ||= new Set();
+            this.categories[categoryId].add(entity);
+        }
+
+        return entity;
+    }
+
+    removeEntity(entity) {
+        let index = this.entities.indexOf(entity);
+        if (index >= 0) {
+            this.entities.splice(index, 1);
+        }
+
+        for (let category of entity.categories) {
+            this.categories[category]?.delete(entity);
+        }
+    }
+
+    category(categoryId) {
+        return this.categories[categoryId] || new Set();
+    }
+}
+
+class Game {
+
+    bestRunTime = parseInt(localStorage[/*nomangle*/"bt"/*/nomangle*/]) || 0;
+    screens = [];
+    difficulty = inputMode == 1 ? DIFFICULTY_EASY : DIFFICULTY_NORMAL;
+
+    constructor() {
+        if (1) {
+            this.lastFrameIndex = 0;
+            this.frameTimes = Array(60).fill(0);
+        }
+
+
+        if (1) {
+            let params = new URLSearchParams(location.search);
+            if (params.get('level')) {
+                ALL_LEVELS = [JSON.parse(params.get('level'))];
+            }
+        }
+
+        this.frame();
+        setTimeout(async () => {
+            await this.navigate(new IntroScreen()).awaitCompletion();
+            this.startNavigation();
+        }, 0);
+    }
+
+    async startNavigation() {
+        let promptedEasyMode;
+
+        while (1) {
+            this.runTime = this.runLevelIndex = this.runDeaths = 0;
+
+            let currentIndex = DIFFICULTIES.indexOf(this.difficulty);
+            if (currentIndex < 0) this.difficulty = DIFFICULTY_NORMAL;
+
+            for (let level = 0 ; level < ALL_LEVELS.length; level++) {
+                this.runLevelIndex = level;
+
+                for (let attempt = 0; ; attempt++) {
+                    try {
+                        let gameplay = this.navigate(new GameplayScreen(ALL_LEVELS[level]), 1);
+                        if (!attempt && !level) this.navigate(new MainMenuScreen(gameplay));
+
+                        // Reveal the level
+                        this.navigate(new TransitionScreen(0, -1)).awaitCompletion();
+
+                        await gameplay.awaitCompletion();
+
+                        break;
+                    } catch (err) {
+                        this.runDeaths++;
+
+                        if (this.runDeaths < this.difficulty.maxDeaths) {
+                            await this.navigate(new GameOverScreen()).awaitCompletion();
+
+                            if (this.difficulty == DIFFICULTY_NORMAL && attempt >= 5 && !promptedEasyMode) {
+                                if (confirm(/*nomangle*/'Switch to easy mode?'/*/nomangle*/)) {
+                                    this.difficulty = DIFFICULTY_EASY;
+                                }
+                                promptedEasyMode = 1;
+                            }
+
+                            this.screens = []; // Fix flickering
+                        } else {
+                            await this.navigate(new FullGameOverScreen()).awaitCompletion();
+                            await this.startNavigation();
+                        }
+                    }
+
+                    // Hide the level
+                    await this.navigate(new TransitionScreen(1, 0)).awaitCompletion();
+                }
+            }
+
+            this.bestRunTime = min(this.bestRunTime || 9999, this.runTime);
+            localStorage[/*nomangle*/"bt"/*/nomangle*/] = this.bestRunTime;
+
+            let blankScreen = this.navigate(new WorldScreen([]));
+            await this.navigate(new RevengeScreen()).awaitCompletion();
+            await this.navigate(new GameCompleteScreen(blankScreen)).awaitCompletion();
+        }
+    }
+
+    frame() {
+        let now = performance.now();
+        let elapsed = min((now - (this.lastFrame || 0)) / 1000, 1 / 30);
+        this.lastFrame = now;
+
+        ctx.miterLimit = 2;
+
+        if (!1 || document.hasFocus()) {
+            if (1) {
+                if (downKeys[71]) elapsed *= 0.1;
+                if (downKeys[70]) elapsed *= 4;
+            }
+
+            let i = this.screens.length;
+            while (this.screens[--i]) {
+                let screen = this.screens[i];
+                screen.cycle(elapsed);
+                if (screen.absorb) break;
+            }
+
+            for (let screen of this.screens) {
+                ctx.wrap(() => screen.render());
+            }
+
+            if (1 && 0) ctx.wrap(() => {
+                this.frameTimes[this.lastFrameIndex] = now;
+                let nextIndex = (this.lastFrameIndex + 1) % this.frameTimes.length;
+                let fps = (this.frameTimes.length - 1) / ((now - this.frameTimes[nextIndex]) / 1000);
+                this.lastFrameIndex = nextIndex;
+
+                ctx.translate(10, 10);
+                ctx.font = '20px Courier';
+                ctx.textAlign = /*nomangle*/'left'/*/nomangle*/;
+                ctx.textBaseline = /*nomangle*/'middle'/*/nomangle*/;
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = '#000';
+                ctx.shadowOffsetY = 2;
+
+                let debugValues = [
+                    `FPS: ${fps.toFixed(1)}`,
+                ]
+
+                for (let screen of this.screens) {
+                    debugValues.push(...screen.debugValues());
+                }
+
+                for (let value of debugValues) {
+                    ctx.fillText(value, 0, 0);
+                    ctx.translate(0, 20);
+                }
+            });
+        }
+
+        requestAnimationFrame(() => this.frame());
+    }
+
+    navigate(screen, reset) {
+        if (reset) this.screens = [];
+        this.screens.push(screen);
+        return screen;
+    }
+}
+
+onload = () => {
+    can = /*nomangle*/g/*/nomangle*/;
+    ctx = can.getContext('2d');
+
+    onresize();
+
+    G = new Game();
+}
+
+class LevelEditorScreen extends WorldScreen {
+    constructor(serializedWorld) {
+        super(serializedWorld);
+
+        this.cursorPosition = {x: 0, y: 0};
+
+        let camera = firstItem(this.world.category('camera'));
+        camera.target = this.world.addEntity(new CameraTarget());
+
+        this.world.editorMode = 1;
+
+        this.editMode = 'entity';
+
+        this.contextMenu = document.createElement('div');
+        this.contextMenu.className = 'context-menu';
+        document.body.appendChild(this.contextMenu);
+        document.body.addEventListener('click', () => this.contextMenu.style.display = 'none', 0);
+        this.contextMenu.addEventListener('click', (e) => e.stopPropagation(), 0);
+
+        oncontextmenu = (e) => {
+            e.preventDefault();
+            return 0;
+        }
+
+        can.onmousedown = (e) => {
+            this.selected = 0;
+
+            if (this.editMode === 'entity') {
+                for (let entity of this.world.entities) {
+                    if (entity.categories.includes('structure')) continue;
+                    if (entity.categories.includes('camera')) continue;
+
+                    if (entity.hitbox.contains(this.cursorPosition) && this.editMode === 'entity') {
+                        this.selected = entity;
+                    }
+                }
+            } else if (this.editMode === 'structure') {
+                for (let structure of this.world.category('structure')) {
+                    let cell = structure.cellAt(this.cursorPosition.x, this.cursorPosition.y);
+                    if (cell || !isBetween(0, this.cursorPosition.x, structure.width) || !isBetween(0, this.cursorPosition.y, structure.height)) {
+                        // Clicked on a filled cell, let's start deleting
+                        this.currentMatrixValue = 0;
+                    } else {
+                        // Clicked on an empty cell, add based on modifier keys
+                        if (downKeys[224] || downKeys[17]) this.currentMatrixValue = 2;
+                        else this.currentMatrixValue = 1;
+                    }
+                }
+
+                this.applyStructureChange();
+            }
+
+            this.mouseIsDown = 1;
+
+            if (e.which === 3) {
+                this.contextMenu.style.left = e.pageX + 'px';
+                this.contextMenu.style.top = e.pageY + 'px';
+                this.contextMenu.style.display = 'block';
+
+                this.contextMenu.innerHTML = '';
+                for (let contextMenuButton of this.contextualActions()) {
+                    this.contextMenu.appendChild(contextMenuButton);
+                }
+
+                this.mouseIsDown = 0;
+            }
+        };
+
+        can.onmouseup = (e) => {
+            this.mouseIsDown = 0;
+        };
+
+        can.onmousemove = (e) => {
+            let out = {};
+            getEventPosition(e, can, out);
+
+            let camera = firstItem(this.world.category('camera'));
+
+            let dXFromCenter = out.x - CANVAS_WIDTH / 2;
+            let dYFromCenter = out.y - CANVAS_HEIGHT / 2;
+
+            this.cursorPosition.x = camera.x + dXFromCenter / camera.zoom;
+            this.cursorPosition.y = camera.y + dYFromCenter / camera.zoom;
+
+            if (this.editMode === 'entity') {
+                if (this.selected && this.mouseIsDown) {
+                    this.selected.x = roundToNearest(this.cursorPosition.x, 50 / 2);
+                    this.selected.y = roundToNearest(this.cursorPosition.y, 50 / 2);
+                }
+            } else if (this.editMode === 'structure') {
+                if (this.mouseIsDown) {
+                    this.applyStructureChange();
+                }
+            }
+        };
+
+        this.selected = 0;
+    }
+
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        if (downKeys[49]) this.editMode = 'entity';
+        if (downKeys[50]) this.editMode = 'structure';
+    }
+
+    render() {
+        super.render();
+
+        ctx.wrap(() => {
+            let camera = firstItem(this.world.category('camera'));
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(
+                CANVAS_WIDTH / 2 / camera.zoom - camera.x,
+                CANVAS_HEIGHT / 2 / camera.zoom - camera.y,
+            );
+
+            let minX = floorToNearest(camera.x - CANVAS_WIDTH / 2, 50);
+            let maxX = ceilToNearest(minX + CANVAS_WIDTH,50) + 50;
+
+            let minY = floorToNearest(camera.y - CANVAS_HEIGHT / 2, 50);
+            let maxY = ceilToNearest(minY + CANVAS_HEIGHT,50) + 50;
+
+            // Grid
+            ctx.wrap(() => {
+                ctx.fillStyle = '#888';
+                for (let x = minX ; x <= maxX ; x += 50) {
+                    ctx.fillRect(x, minY, 0.5, maxY - minY);
+                }
+
+                for (let y = minY ; y <= maxY ; y += 50) {
+                    ctx.fillRect(minX, y, maxX - minX, 0.5);
+                }
+            });
+
+            // Cursor
+            if (this.editMode === 'structure') ctx.wrap(() => {
+                ctx.fillStyle = '#fff';
+                ctx.globalAlpha = 0.4;
+                ctx.fillRect(
+                    floorToNearest(this.cursorPosition.x, 50),
+                    floorToNearest(this.cursorPosition.y, 50),
+                    50,
+                    50,
+                );
+            });
+
+            // Selection
+            if (this.editMode === 'entity' && this.selected) {
+                ctx.wrap(() => {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 3;
+
+                    ctx.translate(this.selected.hitbox.x, this.selected.hitbox.y);
+                    ctx.strokeRect(
+                        -this.selected.hitbox.width / 2,
+                        -this.selected.hitbox.height / 2,
+                        this.selected.hitbox.width,
+                        this.selected.hitbox.height,
+                    );
+                });
+            }
+        });
+
+        // HUD
+        ctx.wrap(() => {
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 20px Impact';
+            ctx.shadowColor = '#000';
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            ctx.fillText('Edit mode: ' + this.editMode, CANVAS_WIDTH / 2, CANVAS_HEIGHT * 4 / 5);
+        });
+    }
+
+    applyStructureChange() {
+        for (let structure of this.world.category('structure')) {
+            let row = floor(this.cursorPosition.y / 50);
+            let col = floor(this.cursorPosition.x / 50);
+
+            let { matrix } = structure;
+
+            let prefixRows = 0;
+            if (row < 0) {
+                prefixRows = -row;
+                row = 0;
+            }
+
+            let prefixCols = 0;
+            if (col < 0) {
+                prefixCols = -col;
+                col = 0;
+            }
+
+            let suffixRows = 0;
+            if (row > matrix.length - 1) {
+                suffixRows = row - (matrix.length - 1);
+            }
+
+            let suffixCols = 0;
+            if (col > matrix[0].length - 1) {
+                suffixCols = col - (matrix[0].length - 1);
+            }
+
+            matrix = applyMatrix(
+                createMatrix(
+                    matrix.length + prefixRows + suffixRows,
+                    matrix[0].length + prefixCols + suffixCols,
+                    () => 1,
+                ),
+                matrix,
+                prefixRows,
+                prefixCols,
+            );
+
+            matrix[row][col] = this.currentMatrixValue;
+
+            structure.matrix = matrix;
+            structure.width = matrix[0].length * 50;
+            structure.height = matrix.length * 50;
+            structure.prerendered = 0;
+
+            for (let otherEntity of this.world.entities) {
+                if (otherEntity === structure) continue;
+                otherEntity.x += prefixCols * 50;
+                otherEntity.y += prefixRows * 50;
+            }
+
+            this.cursorPosition.x += prefixCols * 50;
+            this.cursorPosition.y += prefixRows * 50;
+        }
+
+        this.optimize();
+    }
+
+    insertEntity(entity) {
+        entity.x = roundToNearest(this.cursorPosition.x, 50 / 2);
+        entity.y = roundToNearest(this.cursorPosition.y, 50 / 2);
+        this.selected = entity;
+        this.world.addEntity(entity);
+
+        this.editMode = 'entity';
+    }
+
+    contextMenuButton(label, action) {
+        let contextMenuButton = document.createElement('button');
+        contextMenuButton.innerText = label;
+        contextMenuButton.addEventListener('click', () => {
+            this.contextMenu.style.display = 'none';
+            action();
+        }, 0);
+        return contextMenuButton;
+    }
+
+    colorSwatch(color) {
+        let swatch = document.createElement('div');
+        swatch.className = 'color-swatch';
+        swatch.style.backgroundColor = color;
+        swatch.addEventListener('click', () => {
+            this.contextMenu.style.display = 'none';
+            this.setBackgroundColor(color);
+        }, 0);
+        return swatch;
+    }
+
+    contextMenuSwatchSet(children) {
+        let buttonSet = document.createElement('div');
+        buttonSet.className = 'color-swatch-set';
+        children.forEach(child => buttonSet.appendChild(child));
+        return buttonSet;
+    }
+
+    contextualActions() {
+        let actions = [
+            this.contextMenuButton('Add Cat', () => this.insertEntity(new Cat())),
+            this.contextMenuButton('Add Human', () => this.insertEntity(new Human())),
+            this.contextMenuButton('Add Spikes', () => this.insertEntity(new Spikes())),
+            this.contextMenuButton('Add Water', () => this.insertEntity(new Water())),
+            this.contextMenuButton('Add Label', () => this.insertEntity(new Label('Hello world!'))),
+            this.contextMenuSwatchSet([
+                this.colorSwatch('#f44'),
+                this.colorSwatch('#7d7'),
+                this.colorSwatch('#08f'),
+                this.colorSwatch('#f98'),
+                this.colorSwatch('#b4f'),
+                this.colorSwatch('#4cb'),
+                this.colorSwatch('#f94'),
+            ]),
+        ];
+
+        if (this.selected) {
+            actions.push(
+                this.contextMenuButton('Delete', () => {
+                    this.selected?.world?.removeEntity(this.selected);
+                    this.selected = 0;
+                }),
+            );
+
+            if (this.selected instanceof Spikes) {
+                actions.push(
+                    this.contextMenuButton('Set angle', () => {
+                        let angle = parseInt(prompt('Angle? (in degrees)', this.selected.angle * 180 / PI));
+                        let adjusted = roundToNearest(angle, 90) || 0;
+                        this.selected.angle = adjusted * PI / 180;
+                    }),
+                );
+            }
+            if (this.selected instanceof Spikes || this.selected instanceof Water) {
+                actions.push(
+                    this.contextMenuButton('Set length', () => {
+                        let length = parseInt(prompt('Length?', this.selected.length));
+                        this.selected.length = roundToNearest(length, 50) || this.selected.length;
+                    }),
+                );
+            }
+            if (this.selected instanceof Water) {
+                actions.push(
+                    this.contextMenuButton('Set depth', () => {
+                        let depth = parseInt(prompt('Depth?', this.selected.depth));
+                        this.selected.depth = roundToNearest(depth, 50) || this.selected.depth;
+                    }),
+                );
+            }
+
+            if (this.selected instanceof Label) {
+                actions.push(
+                    this.contextMenuButton('Set text', () => {
+                        this.selected.text = prompt('Text?', this.selected.text) || this.selected.text;
+                    }),
+                );
+            }
+        }
+
+        actions.push(...[
+            this.contextMenuButton('Load', () => this.load()),
+            this.contextMenuButton('Save', () => this.save()),
+            this.contextMenuButton('Share Link', () => this.share()),
+            this.contextMenuButton('Test', () => this.test()),
+        ]);
+
+        return actions;
+    }
+
+    setBackgroundColor(color) {
+        for (let structure of this.world.category('structure')) {
+            structure.color = color;
+            structure.prerendered = 0;
+        }
+    }
+
+    deleteSelection() {
+        this.selected?.world?.removeEntity(this.selected);
+        this.selected = 0;
+    }
+
+    share() {
+        let serialized = serializeWorld(this.world);
+        let url = `${location.protocol}/${location.host}/${location.pathname}?level=${encodeURIComponent(JSON.stringify(serialized))}`;
+        navigator.clipboard.writeText(url);
+        alert('Copied link to clipboard!');
+    }
+
+    save() {
+        let serialized = serializeWorld(this.world);
+
+        navigator.clipboard.writeText(JSON.stringify(serialized));
+        console.log(JSON.stringify(serialized));
+        alert('Copied to clipboard!');
+    }
+
+    load() {
+        let serialized = prompt('Paste the serialized world here:');
+        if (!serialized) return;
+
+        let json = JSON.parse(serialized);
+        G.screens.pop();
+        G.screens.push(new LevelEditorScreen(json));
+    }
+
+    async test() {
+        let serialized = serializeWorld(this.world);
+
+        while (1) {
+            try {
+                await G.navigate(new TestScreen(serialized)).awaitCompletion();
+                break;
+            } catch (error) {
+                await G.navigate(new GameOverScreen()).awaitCompletion();
+                G.screens.pop();
+            }
+        }
+
+    }
+
+    optimize() {
+        for (let structure of this.world.category('structure')) {
+            let { matrix } = structure;
+
+            let rows = matrix.length;
+            let cols = matrix[0].length;
+
+            let firstRow = 999;
+            let firstCol = 999;
+
+            let lastRow = -999;
+            let lastCol = -999;
+
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    let cell = matrix[row][col];
+                    if (cell) continue;
+
+                    firstRow = min(firstRow, row);
+                    firstCol = min(firstCol, col);
+
+                    lastRow = max(lastRow, row);
+                    lastCol = max(lastCol, col);
+                }
+            }
+
+            let packedRows = lastRow - firstRow + 1;
+            let packedCols = lastCol - firstCol + 1;
+
+            let shiftRows = -firstRow;
+            let shiftCols = -firstCol;
+
+            let packed = applyMatrix(
+                createMatrix(packedRows, packedCols, () => 1),
+                matrix,
+                -firstRow,
+                -firstCol,
+            );
+
+            let paddedRows = packedRows + 2;
+            let paddedCols = packedCols + 2;
+
+            let padded = createMatrix(paddedRows, paddedCols, () => 1);
+            padded = applyMatrix(padded, packed, 1, 1);
+
+            shiftRows += 1;
+            shiftCols += 1;
+
+            structure.matrix = padded;
+            structure.prerendered = 0;
+
+            for (let entity of this.world.entities) {
+                if (entity === structure) continue;
+                entity.x += (shiftCols) * 50;
+                entity.y += (shiftRows) * 50;
+            }
+        }
+    }
+}
+
+class CameraTarget extends Entity {
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        let x = 0, y = 0;
+        if (downKeys[37]) x = -1;
+        if (downKeys[39]) x = 1;
+        if (downKeys[38]) y = -1;
+        if (downKeys[40]) y = 1;
+
+        this.x += x * elapsed * 400;
+        this.y += y * elapsed * 400;
+    }
+}
+
+class TestScreen extends GameplayScreen {
+    cycle(elapsed) {
+        super.cycle(elapsed);
+
+        if (downKeys[27]) {
+            this.resolve();
+        }
+    }
+
+    render() {
+        ctx.wrap(() => super.render());
+
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 20px Impact';
+        ctx.shadowColor = '#000';
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+        ctx.fillText('[ESC] to go back to editor'.toUpperCase(), CANVAS_WIDTH / 2, CANVAS_HEIGHT * 4 / 5);
+    }
+}
+
+createMatrix = (rows, cols, value = () => 0) => {
+    let res = [];
+    for (let row = 0 ; row < rows ; row++) {
+        res.push(Array(cols).fill(0).map(value));
+    }
+    return res;
+}
+
+applyMatrix = (target, source, atRow, atCol) => {
+    let rows = target.length;
+    let cols = target[0].length;
+
+    let res = createMatrix(rows, cols);
+
+    for (let row = 0 ; row < rows ; row++) {
+        for (let col = 0 ; col < cols ; col++) {
+            res[row][col] = target[row][col];
+        }
+    }
+
+    for (let row = 0 ; row < source.length ; row++) {
+        for (let col = 0 ; col < source[row].length ; col++) {
+            let finalRow = row + atRow;
+            let finalCol = col + atCol;
+
+            if (
+                !isBetween(0, finalRow, rows - 1) ||
+                !isBetween(0, finalCol, cols - 1)
+            ) {
+                continue;
+            }
+
+            res[finalRow][finalCol] = source[row][col];
+        }
+    }
+
+    return res;
+}
+deminifyMatrix = minified=>{return minified.split("|").map(row=>row.split("").map(x=>parseInt(x)))};
+
+ALL_LEVELS = [
+[{"type": "structure","matrix": deminifyMatrix(`1111111111111111|1000000000000001|1000000000000001|1000000000000001|1000000000000001|1000000000000001|1000000000000001|1000000000000001|1000000000000001|1000011111100001|1000000000000001|1000000000000001|1000000000000001|1111111111111111`),"color": "#08f",},{"type": "human","x": 400,"y": 600,},{"type": "text","x": 400,"y": 300,"text": /*nomangle*/"[SPACE] = ATTACK"/*/nomangle*/,},{"type": "cat","x": 400,"y": 425,},],
+[{"type": "water","x": 1050,"y": 500,"length": 100,"depth": 100,},{"type": "text","x": 450,"y": 250,"text": /*nomangle*/"ELIMINATE ALL ENEMIES"/*/nomangle*/,},{"type": "text","x": 1775,"y": 500,"text": /*nomangle*/"PRESS [E] TO MEOW"/*/nomangle*/,},{"type": "structure","matrix": deminifyMatrix(`11111111111111111111111111111111111111111111111111111|11111111111111111111110000000111111111111111111111111|11100000000000011111100000000111111111111111111111111|11100000000000011000000000000111111111111111111111111|10000000000000011000000000000111111111111111111111111|10000000000000000001110000222111111111111111111111111|10000000000000000001000000000111111111000000000000111|12220000000000000001000000000111111111000000000000111|10000001111000001111001111100111111111000010000000001|10000000000000001111001100000100000000000010000000001|11111000000001111111111100000100000000000010000000001|11111000000001111111111100111100000011110011110000001|11111111111111111111000000111100002211000000000000001|11111111111111111111000000000122200011000000000011111|11111111111111111111110000000000000011000000000011111|11111111111111111111111111000000111111111111111111111|11111111111111111111111111111111111111111111111111111`),"color": "#b4f",},{"type": "spikes","x": 1375,"y": 650,"angle": 1 * PI,"length": 50,},{"type": "spikes","x": 1425,"y": 650,"angle": 1 * PI,"length": 50,},{"type": "cat","x": 450,"y": 375,},{"type": "human","x": 1975,"y": 700,},{"type": "human","x": 1175,"y": 350,},{"type": "human","x": 1575,"y": 600,},{"type": "human","x": 2225,"y": 500,},{"type": "human","x": 1225,"y": 675,},],
+[{"type": "water","x": 500,"y": 775,"length": 100,"depth": 50,},{"type": "spikes","x": 1025,"y": 500,"length": 50,},{"type": "human","x": 125,"y": 700,},{"type": "human","x": 1325,"y": 250,},{"type": "human","x": 1150,"y": 550,},{"type": "human","x": 275,"y": 250,},{"type": "cat","x": 750,"y": 525,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111111111|1111110000000000000000000000001|1111110000000000000000000000001|1111000000000000000000000000001|1111000000000000111111110000001|1111000000000000100000010000001|1111111100011100100000011111001|1111100000011000100000000000001|1111100000011000000000000000001|1000100001111000000000000000001|1000100111111000000010000001111|1000000000001111110010000001111|1000000000000000000011111111111|1000111110000000000011111111111|1000111110011111111111111111111|1111111110011111111111111111111|1111111111111111111111111111111`),"color": "#f94",},],
+[{"type": "water","x": 1350,"y": 350,"length": 100,"depth": 50,},{"type": "water","x": 1150,"y": 350,"length": 100,"depth": 50,},{"type": "human","x": 1050,"y": 250,},{"type": "human","x": 1875,"y": 250,},{"type": "text","x": 950,"y": 850,"text": /*nomangle*/"WALL JUMP TO CLIMB"/*/nomangle*/,},{"type": "cat","x": 325,"y": 875,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111111111111111111|1111111111111111110000001100000000000001|1111111111111111110000000000000000000001|1111111111111111110000000000000000000001|1111111111111111000000001100000001110001|1111111111111111000000001100000001110001|1111111111111111001111001100111001111111|1111111111111111001111111111111001111111|1111111111111111001111111111111001111111|1111111111111111001111111000001001111111|1111111111111111001111111000001001111111|1000000000011110000000000000001001111111|1000000000011110000000000000000001111111|1000000000011110001000000000000001111111|1000000000011110001111110011111111111111|1000000000011110000000010011111111111111|1000000000011110000000010011111111111111|1000000000000000000000000011111111111111|1000011100000000000000000011111111111111|1000011100000000000111111111111111111111|1111111111111111111111111111111111111111`),"color": "#f98",},],
+[{"type": "cat","x": 675,"y": 575,},{"type": "human","x": 1025,"y": 200,},{"type": "human","x": 525,"y": 250,},{"type": "human","x": 675,"y": 400,},{"type": "human","x": 475,"y": 650,},{"type": "human","x": 150,"y": 150,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111111|1100000000010000000000000001|1100000000010000000000000001|1100001110000011100000000001|1111000000000000000000000001|1110000000000000000111100001|1000000011111110000001100001|1011110000110000012001100121|1011110000000000010000000101|1000000000111110000000000101|1100000000000000000001111101|1100111100000000000001111121|1100100000011112211001111101|1100001100001110000000000001|1111111111111111111111111111`),"color": "#08f",},],
+[{"type": "text","x": 1050,"y": 350,"text": /*nomangle*/"HOLD [DOWN] TO ROLL"/*/nomangle*/,},{"type": "text","x": 1625,"y": 375,"text": /*nomangle*/"BULLETS CAN'T HIT YOU"/*/nomangle*/,},{"type": "text","x": 1625,"y": 425,"text": /*nomangle*/"WHILE ROLLING"/*/nomangle*/,},{"type": "spikes","x": 2325,"y": 400,"angle": 1 * PI,"length": 450,},{"type": "cat","x": 300,"y": 325,},{"type": "human","x": 2675,"y": 450,"color": "#000",},{"type": "human","x": 3475,"y": 350,"color": "#000",},{"type": "structure","matrix": deminifyMatrix(`111111111111111111111111111111111111111111111111111111111111111111111111|100000000001111111111111111111111111111111111111111111111111111111111111|100000000001111111111111111111111111111111111111111111111110000000011111|100000000000000011111111111111111111111111111111111111111110000000011111|100000000000000011111111111111111111111111111111111111100000000000011111|100000000000000011111111111100000000000001111111111111100000001110011111|100000000000000000000000000100000000000001111111111111100000000000000001|100011110000000000000000000100000000000001111111111000100111000000000001|100000000000000011111111100100000000011000000000000000100100001111111111|100000000001111111111111100000000000011111111111110000000100001111111111|111111111111111111111111100000000001111111111111110001111101111111111111|111111111111111111111111100000111000011111111111110000000001111111111111|111111111111111111111111100000111000011111111111111111111111111111111111|111111111111111111111111111111111111111111111111111111111111111111111111`),"color": "#b4f",},],
+[{"type": "water","x": 250,"y": 825,"length": 100,"depth": 50,},{"type": "water","x": 500,"y": 875,"length": 100,"depth": 50,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111111111|1000000000000000000111111111111|1000000000000000000110000111111|1000000000000000000000000111111|1111100111100011111110000111111|1100100100000010000110000111111|1100000100000000000110000111111|1100000100000000000111100111111|1111100000111110000000000111111|1100000000000000000011000000001|1100000000000000000011000000001|1100011111111111001111110000001|1100000000000000000011110000001|1100000000000000000000000000001|1100000000000000111111111110011|1111001110000000110000000110011|1111001110011001110000000000011|1111111110011000000000000000011|1111111111111111111000001111111|1111111111111111111111111111111`),"color": "#f94",},{"type": "cat","x": 650,"y": 525,},{"type": "human","x": 350,"y": 700,},{"type": "human","x": 450,"y": 150,},{"type": "human","x": 1325,"y": 650,},{"type": "human","x": 1100,"y": 300,},{"type": "human","x": 625,"y": 350,},{"type": "human","x": 1075,"y": 900,},{"type": "human","x": 150,"y": 350,},],
+[{"type": "human","x": 175,"y": 200,},{"type": "human","x": 625,"y": 250,},{"type": "human","x": 925,"y": 250,},{"type": "human","x": 825,"y": 500,},{"type": "human","x": 275,"y": 550,},{"type": "cat","x": 450,"y": 425,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111|1000000000000000000000001|1000000000000000000011001|1000111000100001100001001|1000000000100000000000001|1011100011100000000000001|1000000000111220022111001|1000000000000000000010001|1001111000000111110000001|1001000011000100000000001|1001000000011100000001111|1000000000000000111001111|1111111111111111111111111`),"color": "#7d7",},],
+[{"type": "spikes","x": 950,"y": 550,"angle": 0.5 * PI,"length": 50,},{"type": "spikes","x": 1375,"y": 500,"length": 50,},{"type": "spikes","x": 1150,"y": 650,"angle": 1 * PI,"length": 50,},{"type": "spikes","x": 725,"y": 750,"angle": 1 * PI,"length": 50,},{"type": "human","x": 1525,"y": 500,},{"type": "human","x": 525,"y": 400,},{"type": "human","x": 325,"y": 925,},{"type": "human","x": 1850,"y": 550,},{"type": "human","x": 1300,"y": 150,},{"type": "human","x": 350,"y": 250,},{"type": "human","x": 1450,"y": 800,},{"type": "cat","x": 1150,"y": 525,},{"type": "structure","matrix": deminifyMatrix(`111111111111111111111111111111111111111|111111111110000000000000000001111111111|111100000000000111000000000000000000111|111100000000000111000000000001111100111|100000000000000011000011111101111100111|100000000011110011000000111101111100001|100011110000000011111110100001000000001|100000000000000000100000100000000000001|100000000000000000100000000000000111101|111111100111000000100000000000000100001|111111100111000000100000000100000100001|111111100011000111100011100111111100001|111111100011000000000011000000000100111|111000000000000000000000000000000100001|111001100000001110000000000000000100001|111001111110000000011000011000000100011|111001111110000000011000011000000000011|111000000011100011111222211111100000011|111000000011100011111000011111000111111|111000000000000000000000000000000111111|111111111111111111111111111111111111111`),"color": "#4cb",},],
+[{"type": "human","x": 600,"y": 550,},{"type": "human","x": 950,"y": 200,},{"type": "human","x": 125,"y": 250,},{"type": "human","x": 550,"y": 700,},{"type": "human","x": 1300,"y": 600,},{"type": "human","x": 475,"y": 400,},{"type": "human","x": 775,"y": 550,},{"type": "human","x": 800,"y": 350,},{"type": "human","x": 100,"y": 900,},{"type": "human","x": 1275,"y": 850,},{"type": "cat","x": 675,"y": 875,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111111|1111111111111111110000001111|1111111111111111110000001111|1000000000000000000011001001|1000000000000000000011001001|1000010011110000221111001001|1011110000010000000000000001|1000000000000000000000000001|1000000000000011110111110001|1111110011110000010000012201|1111110000000000011100010001|1111000000000000000000000001|1111000000111122111111000001|1000000000001100110000001111|1000001100001100110000000001|1001111100221100110000000001|1000001100000000000001110001|1001100000000000000001110001|1001111111111111111111111111|1111111111111111111111111111`),"color": "#7d7",},],
+[{"type": "water","x": 900,"y": 1025,"length": 400,"depth": 100,},{"type": "structure","matrix": deminifyMatrix(`11111111111111111111111111111111111|11111111100000000000000011111111111|11111110000000000000000000000000001|11111110000000001100000000000000001|10000110011100000100000010000111001|10000000011111100100000010000111001|10000000011111100100011111111111001|10000110011000000000010000111110001|10000110011000000000000000000000001|11111110000000100001000000000000001|11111110000000100001000000111110011|11111111111100100111110000111110011|11111111000000100000000000111110011|11111111000000100000000000000000011|11111111000000000000000011112211111|11111111000011111111110011110011111|11111111220000000000000011110011111|11111111000000000000000000000011111|11111111000000000000000000110011111|11111111111111001111001111111111111|11111111111111001111001111111111111|11111111111111111111111111111111111`),"color": "#f94",},{"type": "cat","x": 950,"y": 725,},{"type": "human","x": 875,"y": 900,},{"type": "human","x": 900,"y": 500,},{"type": "human","x": 1050,"y": 500,},{"type": "human","x": 1375,"y": 250,},{"type": "human","x": 500,"y": 500,},{"type": "human","x": 675,"y": 200,},{"type": "human","x": 200,"y": 400,},{"type": "human","x": 1675,"y": 450,},],
+[{"type": "water","x": 100,"y": 725,"length": 100,"depth": 50,},{"type": "water","x": 675,"y": 1275,"length": 150,"depth": 50,},{"type": "spikes","x": 725,"y": 250,"length": 50,},{"type": "spikes","x": 725,"y": 500,"angle": 1 * PI,"length": 50,},{"type": "human","x": 825,"y": 1150,},{"type": "human","x": 425,"y": 700,},{"type": "human","x": 1125,"y": 600,},{"type": "human","x": 975,"y": 275,},{"type": "human","x": 375,"y": 250,},{"type": "spikes","x": 100,"y": 100,"angle": 1 * PI,"length": 50,},{"type": "human","x": 325,"y": 1050,},{"type": "cat","x": 650,"y": 975,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111|1111110000000000001111111|1001110000000000000011111|1000000000000000000011111|1000000001100000110000011|1001110001100010110000011|1001111111100010110000011|1001111111100010111111011|1001111111100010111111011|1001111111100010111111011|1001110000100000111111011|1000000000000000000000001|1000000000000000000000001|1001110000100011110011111|1001110000100010110011111|1111110111100010000011111|1111110000100000000011111|1111110000000000001111111|1111110000000000000011111|1111000000000000000011111|1111000011011110000011111|1111000011000000000011111|1111111111000000001111111|1111111111000000001111111|1111111111110001111111111|1111111111110001111111111|1111111111111111111111111`),"color": "#08f",},],
+[{"type": "water","x": 400,"y": 1400,"length": 100,"depth": 50,},{"type": "water","x": 1250,"y": 1200,"length": 100,"depth": 50,},{"type": "water","x": 150,"y": 1350,"length": 100,"depth": 50,},{"type": "human","x": 1325,"y": 250,},{"type": "human","x": 300,"y": 950,},{"type": "human","x": 625,"y": 1100,},{"type": "human","x": 1025,"y": 900,},{"type": "human","x": 1525,"y": 450,},{"type": "human","x": 1625,"y": 800,},{"type": "human","x": 275,"y": 1200,},{"type": "human","x": 1100,"y": 500,},{"type": "human","x": 650,"y": 250,},{"type": "cat","x": 875,"y": 775,},{"type": "structure","matrix": deminifyMatrix(`1111111111111111111111111111111111111|1111111111111111100000000000011111111|1111111111111100000000000000011111111|1111111111100000000000011100011111111|1111111111100000011110000000011111111|1111111111100000010000000000011111111|1111111111111110010000011111111111111|1111111111100000010000010000011111111|1111111111100000011110010000000001111|1111111111100000000000000000000000011|1111111111100111111000000000011111011|1111111111100111111111111100011111011|1111111111100100000000000000011111011|1111110000000100000000000000000011011|1111110111100000000000000000000000001|1111110111100000000000000110000000001|1111000011111001111100000010000000001|1111000011111001000000000011100111111|1000000000111001000000000011100111111|1000000000111000000111000011100111111|1001111122100000000000000000000111111|1000000000100000000000000000000111111|1000000000100000000000000011111111111|1000000000111110000111110011111111111|1000000000000010000111111111111111111|1000111000000010000111111111111111111|1100111000000000000111111111111111111|1111111001111111111111111111111111111|1111111111111111111111111111111111111`),"color": "#7d7",},],
+[{"type": "water","x": 575,"y": 1125,"length": 450,"depth": 50,},{"type": "water","x": 1400,"y": 1075,"length": 100,"depth": 50,},{"type": "human","x": 600,"y": 1000,},{"type": "human","x": 775,"y": 800,},{"type": "human","x": 575,"y": 800,},{"type": "human","x": 450,"y": 450,},{"type": "human","x": 875,"y": 350,},{"type": "human","x": 1000,"y": 350,},{"type": "human","x": 1475,"y": 950,},{"type": "human","x": 1450,"y": 550,},{"type": "human","x": 825,"y": 150,},{"type": "human","x": 100,"y": 1000,},{"type": "human","x": 600,"y": 1300,},{"type": "spikes","x": 900,"y": 450,"angle": 1 * PI,"length": 400,},{"type": "spikes","x": 350,"y": 1200,"angle": 1 * PI,"length": 50,},{"type": "spikes","x": 825,"y": 1200,"angle": 1 * PI,"length": 50,},{"type": "cat","x": 1050,"y": 775,},{"type": "structure","matrix": deminifyMatrix(`11111111111111111111111111111111111|11111111110000000000000111111111111|11111111110001000000000111111111111|11111111110001000010000111111111111|11111111110001111110011111111111111|11111111110001000000000001111111111|11111111110000000000000000000011111|11111111110000000000000000000011111|11111111000001111111111001110011111|11111111000001000100001001000000001|11111111111001000100001001000011001|11111111110001000000000001000011001|11111111110221000000000001001111001|11111111110000000100000000001111001|11111000000000000100000000001111001|11111000010001000100000000111111001|10000000010001000111111000000000001|10011111111111111100000000000000001|10011111111111111100000000000000001|10000000000000000000000000000000001|10000000000000000000100011100111111|11110110011111001100100011100111111|11110110011111001100111111111111111|11110111111111111100111111111111111|11110000000000000000111111111111111|11111111100000011111111111111111111|11111111100000011111111111111111111|11111111111111111111111111111111111`),"color": "#b4f",},],
+];
+INTRO_LEVEL = [{"type": "structure","matrix": deminifyMatrix(`11111111111|10000000001|10000000001|11111111111`),"color": "#fff",},];
+
+</script>
+<a href="./index.html" style="position:fixed;top:8px;left:8px;z-index:999;font-family:monospace;color:#888;text-decoration:none;opacity:.6">&#8962; ARCADE</a>

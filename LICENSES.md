@@ -43,6 +43,13 @@ apply ONLY to the third-party games listed.
   credits) were REMOVED and replaced with original music. A bridge
   script adds leaderboard submission. Game logic otherwise unmodified.
 
+## Clawstrike
+- (c) remvst (https://github.com/remvst/clawstrike), js13k 2025 entry.
+- Reserved-rights project used on 2bitArcade WITH THE AUTHOR'S WRITTEN
+  PERMISSION, explicitly including commercial use (permission held by
+  2bit Developer; obtained July 2026). Hosted as the author's readable
+  debug build; access-gate script tags injected, no gameplay changes.
+
 ## Jungle Strike
 - Original work by 2bit Developer (created for 2bitArcade).
 - All code and art original (canvas-drawn run-and-gun); no third-party

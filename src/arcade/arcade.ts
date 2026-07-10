@@ -90,6 +90,13 @@ const GAMES: Game[] = [
         url: './sunsetdrift.html',
     },
     {
+        id: 'clawstrike', category: 'Shooter',
+        title: 'CLAWSTRIKE',
+        desc: 'A js13k raycast action game by remvst, hosted with the author\u2019s written permission. Fast first-person claw-and-gun action in 13KB of readable code. Currently unranked \u2014 leaderboard hook coming.',
+        img: './arcade/clawstrike_arcade.png',
+        url: './clawstrike.html',
+    },
+    {
         id: 'junglestrike', category: 'Run & Gun',
         title: 'JUNGLE STRIKE',
         desc: 'An original 2bitArcade run-and-gun. Fight through four stages \u2014 jungle, river, cave, and the enemy base \u2014 each with its own look, enemies, and end boss. Grab spread, machine-gun, and laser power-ups. Run, jump, aim 8 ways, survive.',
@@ -536,7 +543,8 @@ function walletLabel() {
     if (walletConnected) {
         const short = `${userPublicKey.substring(0, 4)}..${userPublicKey.substring(userPublicKey.length - 4)}`;
         const watch = localStorage.getItem('watchAddress') === userPublicKey ? '[WATCH] ' : '';
-        btn.textContent = `${watch}${short} \u2502 ${Math.floor(tokenBalance).toLocaleString()} $2BA`;
+        const uname = arcadeUsername ? `${arcadeUsername} \u2502 ` : '';
+        btn.textContent = `${uname}${watch}${short} \u2502 ${Math.floor(tokenBalance).toLocaleString()} $2BA`;
     } else btn.textContent = 'CONNECT WALLET';
 }
 
@@ -550,7 +558,7 @@ async function loadUsername() {
         const name = await res.json();
         if (typeof name === 'string' && name) { arcadeUsername = name; localStorage.setItem('arcadeUsername', name); }
         else { localStorage.removeItem('arcadeUsername'); }
-    } catch (e) { /* fall back to WL_ naming */ }
+    } catch (e) { /* fall back to WL_ naming */ }    walletLabel();
 }
 
 async function syncBalance() {
@@ -759,7 +767,7 @@ function showUsernameModal(isEdit: boolean) {
             });
             const r = await res.json();
             if (r && r.ok) {
-                arcadeUsername = r.username;
+                arcadeUsername = r.username; walletLabel();
                 localStorage.setItem('arcadeUsername', r.username);
                 walletLabel();
                 fetchRatings();
