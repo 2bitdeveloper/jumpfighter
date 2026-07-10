@@ -43,6 +43,13 @@ apply ONLY to the third-party games listed.
   credits) were REMOVED and replaced with original music. A bridge
   script adds leaderboard submission. Game logic otherwise unmodified.
 
+## Elematter
+- (c) Jack Rugile (https://github.com/jackrugile/elematter-js13k), MIT.
+- js13k 2014 tower defense. Hosted from the author's committed build
+  (minified for the 13KB contest; full readable source in the linked repo's
+  src/). Modifications: access-gate script tags + leaderboard bridge hooks
+  (wave telemetry, submit on win/loss). Includes jsfxr (vendor, MIT).
+
 ## Clawstrike
 - (c) remvst (https://github.com/remvst/clawstrike), js13k 2025 entry.
 - Reserved-rights project used on 2bitArcade WITH THE AUTHOR'S WRITTEN

@@ -90,6 +90,13 @@ const GAMES: Game[] = [
         url: './sunsetdrift.html',
     },
     {
+        id: 'elematter', category: 'Tower Defense',
+        title: 'ELEMATTER',
+        desc: 'A 13KB elemental tower defense by jackrugile (MIT) \u2014 place towers, mix elements, and hold the line through escalating waves. Leaderboard ranks waves survived; win the whole map for a full board.',
+        img: './arcade/elematter_arcade.png',
+        url: './elematter.html',
+    },
+    {
         id: 'clawstrike', category: 'Shooter',
         title: 'CLAWSTRIKE',
         desc: 'A js13k raycast action game by remvst, hosted with the author\u2019s written permission. Fast first-person claw-and-gun action in 13KB of readable code. Currently unranked \u2014 leaderboard hook coming.',

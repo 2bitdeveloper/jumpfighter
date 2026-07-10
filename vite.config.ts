@@ -22,6 +22,7 @@ export default defineConfig({
         sunsetdrift: resolve(__dirname, 'sunsetdrift.html'),
         junglestrike: resolve(__dirname, 'junglestrike.html'),
         clawstrike: resolve(__dirname, 'clawstrike.html'),
+        elematter: resolve(__dirname, 'elematter.html'),
       },
     },
   },
