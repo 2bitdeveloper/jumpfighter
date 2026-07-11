@@ -23,6 +23,7 @@ export default defineConfig({
         junglestrike: resolve(__dirname, 'junglestrike.html'),
         clawstrike: resolve(__dirname, 'clawstrike.html'),
         elematter: resolve(__dirname, 'elematter.html'),
+        b1t: resolve(__dirname, 'b1t.html'),
       },
     },
   },
