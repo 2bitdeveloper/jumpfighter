@@ -167,6 +167,26 @@
 
       <footer id="arcade-footer">
         <span>Developed by 2bit Developer</span>
+        <div class="official-links">
+          <span class="official-label">▓ OFFICIAL CHANNELS ▓</span>
+          <a id="official-x" href="#" target="_blank" rel="noopener"></a>
+          <code id="official-ca" title="official $2BA contract address"></code>
+          <p id="official-warning" class="official-warning"></p>
+        </div>
+        <script>
+          (function () {
+            var cfg = window.ARCADE_CONFIG || {};
+            var off = cfg.OFFICIAL || {};
+            var x = document.getElementById("official-x");
+            x.textContent = (off.X_HANDLE || "@b1t_exe") + " on X";
+            x.href = off.X_URL || "https://x.com/b1t_exe";
+            document.getElementById("official-ca").textContent =
+              cfg.CONTRACT_ADDRESS
+                ? "$2BA CA: " + cfg.CONTRACT_ADDRESS
+                : "$2BA contract address: announced at launch — only via " + (off.X_HANDLE || "@b1t_exe") + " and this page";
+            document.getElementById("official-warning").textContent = off.WARNING || "";
+          })();
+        </script>
       </footer>
     </div>
 

@@ -40,4 +40,13 @@ window.ARCADE_CONFIG = {
   INITIAL_TOKEN_SUPPLY: 1000000000,  // 1,000,000,000 $2BA (for the "burned" counter)
   REVIVE_COST:          1000,        // $2BA burned per revive
   MIN_TOKENS_TO_PLAY:   1000,        // $2BA balance required after the free trial
+
+  // ---- OFFICIAL CHANNELS (anti-impersonation) ----
+  // The ONLY official X account. The ONLY official contract address is
+  // CONTRACT_ADDRESS above. Anything else is an impostor.
+  OFFICIAL: {
+    X_HANDLE: "@b1t_exe",
+    X_URL: "https://x.com/b1t_exe",
+    WARNING: "the only official x account is @b1t_exe. the only official $2BA contract address appears on this page. anything else is an impostor wearing our ghost.",
+  },
 };
