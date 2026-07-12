@@ -41,6 +41,9 @@ window.ARCADE_CONFIG = {
   REVIVE_COST:          1000,        // $2BA burned per revive
   MIN_TOKENS_TO_PLAY:   1000,        // $2BA balance required after the free trial
 
+  // ---- FEATURE FLAGS ----
+  B1T_CHAT_LIVE: false,  // flip to true once Anthropic credits are loaded — enables the b1t chat page
+
   // ---- OFFICIAL CHANNELS (anti-impersonation) ----
   // The ONLY official X account. The ONLY official contract address is
   // CONTRACT_ADDRESS above. Anything else is an impostor.

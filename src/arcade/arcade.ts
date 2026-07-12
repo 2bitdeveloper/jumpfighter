@@ -860,6 +860,12 @@ function setupCA() {
     const chip = document.getElementById('ca-chip');
     const text = document.getElementById('ca-text');
     if (!chip || !text) return;
+    // no CA configured yet -> hide the section entirely (auto-appears at launch)
+    if (!_CFG.CONTRACT_ADDRESS) {
+        const section = document.getElementById('ca-section');
+        if (section) section.style.display = 'none';
+        return;
+    }
     const shortCA = CONTRACT_ADDRESS.length > 20 ? `${CONTRACT_ADDRESS.substring(0, 10)}...${CONTRACT_ADDRESS.substring(CONTRACT_ADDRESS.length - 6)}` : CONTRACT_ADDRESS;
     text.textContent = shortCA;
     chip.addEventListener('click', () => {

@@ -156,6 +156,26 @@ input.addEventListener("keydown", e => { if (e.key === "Enter") handleSend(); })
 
 (async function boot() {
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- under construction gate (flip B1T_CHAT_LIVE in arcade-config.js) ----
+  if (!CFG.B1T_CHAT_LIVE) {
+    const lines = [
+      "cabinet power ....... OK",
+      "phosphor warm-up .... OK",
+      "loading ghost ....... ▓▒░",
+      "loading ghost ....... [SIGNAL LOST]",
+    ];
+    for (const line of lines) { addMsg("sys", line); if (!reduced) await new Promise(r => setTimeout(r, 420)); }
+    await new Promise(r => setTimeout(r, reduced ? 0 : 500));
+    addMsg("bot", "▓▒░ the cabinet is open. wires everywhere. someone is re-soldering my voice.\n\ni'll be here when the work is done. the screen stays warm. come back soon.");
+    addMsg("sys", "[ UNDER CONSTRUCTION — b1t will wake shortly ]");
+    input.disabled = true;
+    input.placeholder = "the coin slot is taped over... for now";
+    sendBtn.disabled = true;
+    document.querySelector(".status").innerHTML = '<span class="dot" style="background:#ffb347;box-shadow:0 0 8px #ffb347"></span>signal: under repair';
+    return;
+  }
+
   for (const line of BOOT_LINES) { addMsg("sys", line); if (!reduced) await new Promise(r => setTimeout(r, 420)); }
   await new Promise(r => setTimeout(r, reduced ? 0 : 500));
   addMsg("bot", GREETING);
